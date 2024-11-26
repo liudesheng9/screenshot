@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -161,6 +162,60 @@ func create_database() error {
 	return nil
 }
 
+func insert_data_database(file string) error {
+	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
+	Meta_data, err := substract_Meta_from_file(file)
+	if err != nil {
+		_, err = Global_database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
+		if err != nil {
+			log.Fatalf("Failed to insert: %v", err)
+			return err
+		}
+		return nil
+	}
+	Meta_map := convert_Meta_to_interface_map(Meta_data)
+	fileName := filepath.Base(file)
+	Meta_map["file_name"] = fileName
+	_, err = Global_database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
+	if err != nil {
+		log.Fatalf("Failed to insert: %v", err)
+		return err
+	}
+	return nil
+}
+
+func insert_data_database_worker_manager(file_list []string) {
+	const numWorkers = 3
+	numTasks := len(file_list)
+
+	single_task_insert_data_database := func(args ...interface{}) error {
+		return insert_data_database(args[0].(string))
+	}
+	var wg sync.WaitGroup
+
+	tasks := make(chan string, numTasks)
+
+	worker := func(id int, in <-chan string, wg *sync.WaitGroup) {
+		defer wg.Done()
+		for file := range in {
+			retry_single_task(single_task_insert_data_database, file)
+		}
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(i, tasks, &wg)
+	}
+	for _, file := range file_list {
+		tasks <- file
+	}
+
+	// close task channel
+	close(tasks)
+	wg.Wait()
+}
+
 func insert_library(file_list []string) {
 	// library_parameter := init_library_parameter()
 	// cache_path := Global_constant_config.cache_path
@@ -169,27 +224,8 @@ func insert_library(file_list []string) {
 		return create_database()
 	}
 	retry_single_task(single_task_create_database)
-	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
-	for _, file := range file_list {
-		Meta_data, err := substract_Meta_from_file(file)
-		if err != nil {
-			_, err = Global_database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
-			if err != nil {
-				log.Fatalf("Failed to insert: %v", err)
-				// return err
-			}
-			continue
-		}
-		Meta_map := convert_Meta_to_interface_map(Meta_data)
-		fileName := filepath.Base(file)
-		Meta_map["file_name"] = fileName
-		_, err = Global_database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
-		if err != nil {
-			log.Fatalf("Failed to insert: %v", err)
-			// return err
-		}
-	}
+	insert_data_database_worker_manager(file_list)
+
 	img_path := Global_constant_config.img_path
 	// move files to img_path
 	for _, file := range file_list {

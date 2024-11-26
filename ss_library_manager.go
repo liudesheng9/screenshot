@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -128,6 +130,13 @@ func init_library_parameter() library_parameter {
 	return library_parameter
 }
 
+func hashStringSHA256(input string) string {
+	hasher := sha256.New()
+	hasher.Write([]byte(input))
+	hashBytes := hasher.Sum(nil)
+	return hex.EncodeToString(hashBytes)
+}
+
 func manage_library(file_list []string) {
 	// library_parameter := init_library_parameter()
 	// cache_path := Global_constant_config.cache_path
@@ -135,6 +144,7 @@ func manage_library(file_list []string) {
 
 	createTableSQL := `
 	CREATE TABLE IF NOT EXISTS screenshots (
+		id TEXT PRIMARY KEY NOT NULL,
 		hash TEXT NULL,
         hash_kind TEXT NULL,
 		year INT NULL,
@@ -151,23 +161,25 @@ func manage_library(file_list []string) {
 		log.Fatalf("Failed to create table: %v", err)
 	}
 	fmt.Println("Table created successfully")
-	insertSQL := `INSERT INTO screenshots (hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	insertSQL_NULL := `INSERT INTO screenshots (file_name) VALUES (?)`
+	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
 	for _, file := range file_list {
 		Meta_data, err := substract_Meta_from_file(file)
 		if err != nil {
-			_, err = Global_database.Exec(insertSQL_NULL, filepath.Base(file))
+			_, err = Global_database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
 			if err != nil {
 				log.Fatalf("Failed to insert: %v", err)
+				// return err
 			}
 			continue
 		}
 		Meta_map := convert_Meta_to_interface_map(Meta_data)
 		fileName := filepath.Base(file)
 		Meta_map["file_name"] = fileName
-		_, err = Global_database.Exec(insertSQL, fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
+		_, err = Global_database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
 		if err != nil {
 			log.Fatalf("Failed to insert: %v", err)
+			// return err
 		}
 	}
 	img_path := Global_constant_config.img_path
@@ -178,6 +190,7 @@ func manage_library(file_list []string) {
 		err := os.Rename(file, newPath)
 		if err != nil {
 			log.Fatalf("Failed to move file: %v", err)
+			// return err
 		}
 	}
 }

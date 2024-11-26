@@ -192,16 +192,16 @@ func threadControl() {
 }
 
 func thread_manage_library() {
+	task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
+		input := args[0].(string)
+		return get_target_file_num(input)
+	}
+	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
+		input := args[0].(string)
+		return get_target_file_path_name(input)
+	}
 	for {
 		time.Sleep(5 * time.Second)
-		task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
-			input := args[0].(string)
-			return get_target_file_num(input)
-		}
-		task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
-			input := args[0].(string)
-			return get_target_file_path_name(input)
-		}
 		file_num := retry_task(task_get_target_file_num, Global_constant_config.cache_path).(int)
 		if file_num > 20 {
 			cache_path := Global_constant_config.cache_path

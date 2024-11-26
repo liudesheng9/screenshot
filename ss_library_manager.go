@@ -144,7 +144,7 @@ func manage_library(file_list []string) {
 	insertSQL := `INSERT INTO screenshots (hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertSQL_NULL := `INSERT INTO screenshots (file_name) VALUES (?)`
 	for _, file := range file_list {
-		macro_data, err := substract_macro_from_file(file)
+		Meta_data, err := substract_Meta_from_file(file)
 		if err != nil {
 			_, err = Global_database.Exec(insertSQL_NULL, filepath.Base(file))
 			if err != nil {
@@ -152,10 +152,10 @@ func manage_library(file_list []string) {
 			}
 			continue
 		}
-		macro_map := convert_macro_to_interface_map(macro_data)
+		Meta_map := convert_Meta_to_interface_map(Meta_data)
 		fileName := filepath.Base(file)
-		macro_map["file_name"] = fileName
-		_, err = Global_database.Exec(insertSQL, fmt.Sprintf("%d", macro_map["hash"]), macro_map["hash_kind"], macro_map["year"], macro_map["month"], macro_map["day"], macro_map["hour"], macro_map["minute"], macro_map["second"], macro_map["display_num"], macro_map["file_name"])
+		Meta_map["file_name"] = fileName
+		_, err = Global_database.Exec(insertSQL, fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
 		if err != nil {
 			log.Fatalf("Failed to insert: %v", err)
 		}

@@ -102,7 +102,7 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 		png.Encode(file, img)
 
 		go func() {
-			wirte_macro_to_file(filePath, fileName, img)
+			wirte_Meta_to_file(filePath, fileName, img)
 			Global_file_lock_Mutex.Lock()
 			Global_file_lock = append(Global_file_lock, fileName)
 			Global_file_lock_Mutex.Unlock()

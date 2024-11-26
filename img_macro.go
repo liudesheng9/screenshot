@@ -13,7 +13,7 @@ import (
 	pis "github.com/dsoprea/go-png-image-structure/v2"
 )
 
-type ImageMacro struct {
+type ImageMeta struct {
 	hash         uint64
 	hashKind     string
 	year         int
@@ -26,8 +26,8 @@ type ImageMacro struct {
 	AlphaMessage string
 }
 
-func init_macro(fileName string, img *image.RGBA) ImageMacro {
-	macro := ImageMacro{}
+func init_Meta(fileName string, img *image.RGBA) ImageMeta {
+	Meta := ImageMeta{}
 	hash, _ := AverageHash(img)
 	imageHash := hash.hash
 	imageHashKind := hash.kind
@@ -42,61 +42,61 @@ func init_macro(fileName string, img *image.RGBA) ImageMacro {
 	imageSecond, _ := strconv.Atoi(timeStr[4:6])
 	AlphaMessage := "This screenshot owned by Chen, Xingtong"
 
-	macro.hash = imageHash
-	macro.hashKind = imageHashKind
-	macro.year = imageYear
-	macro.month = imageMonth
-	macro.day = imageDay
-	macro.hour = imageHour
-	macro.minute = imageMinute
-	macro.second = imageSecond
-	macro.displayNum = displayNum
-	macro.AlphaMessage = AlphaMessage
+	Meta.hash = imageHash
+	Meta.hashKind = imageHashKind
+	Meta.year = imageYear
+	Meta.month = imageMonth
+	Meta.day = imageDay
+	Meta.hour = imageHour
+	Meta.minute = imageMinute
+	Meta.second = imageSecond
+	Meta.displayNum = displayNum
+	Meta.AlphaMessage = AlphaMessage
 
-	return macro
+	return Meta
 }
 
-func convert_macro_to_map(macro ImageMacro) map[string]string {
-	macroMap := make(map[string]string)
-	macroMap["hash"] = fmt.Sprintf("%d", macro.hash)
-	macroMap["hashKind"] = macro.hashKind
-	macroMap["year"] = fmt.Sprintf("%d", macro.year)
-	macroMap["month"] = fmt.Sprintf("%d", macro.month)
-	macroMap["day"] = fmt.Sprintf("%d", macro.day)
-	macroMap["hour"] = fmt.Sprintf("%d", macro.hour)
-	macroMap["minute"] = fmt.Sprintf("%d", macro.minute)
-	macroMap["second"] = fmt.Sprintf("%d", macro.second)
-	macroMap["displayNum"] = fmt.Sprintf("%d", macro.displayNum)
-	macroMap["AlphaMessage"] = macro.AlphaMessage
+func convert_Meta_to_map(Meta ImageMeta) map[string]string {
+	MetaMap := make(map[string]string)
+	MetaMap["hash"] = fmt.Sprintf("%d", Meta.hash)
+	MetaMap["hashKind"] = Meta.hashKind
+	MetaMap["year"] = fmt.Sprintf("%d", Meta.year)
+	MetaMap["month"] = fmt.Sprintf("%d", Meta.month)
+	MetaMap["day"] = fmt.Sprintf("%d", Meta.day)
+	MetaMap["hour"] = fmt.Sprintf("%d", Meta.hour)
+	MetaMap["minute"] = fmt.Sprintf("%d", Meta.minute)
+	MetaMap["second"] = fmt.Sprintf("%d", Meta.second)
+	MetaMap["displayNum"] = fmt.Sprintf("%d", Meta.displayNum)
+	MetaMap["AlphaMessage"] = Meta.AlphaMessage
 
-	return macroMap
+	return MetaMap
 }
 
-func convert_macro_to_interface_map(macro ImageMacro) map[string]interface{} {
-	macroMap := make(map[string]interface{})
-	macroMap["hash"] = macro.hash
-	macroMap["hashKind"] = macro.hashKind
-	macroMap["year"] = macro.year
-	macroMap["month"] = macro.month
-	macroMap["day"] = macro.day
-	macroMap["hour"] = macro.hour
-	macroMap["minute"] = macro.minute
-	macroMap["second"] = macro.second
-	macroMap["displayNum"] = macro.displayNum
-	macroMap["AlphaMessage"] = macro.AlphaMessage
+func convert_Meta_to_interface_map(Meta ImageMeta) map[string]interface{} {
+	MetaMap := make(map[string]interface{})
+	MetaMap["hash"] = Meta.hash
+	MetaMap["hashKind"] = Meta.hashKind
+	MetaMap["year"] = Meta.year
+	MetaMap["month"] = Meta.month
+	MetaMap["day"] = Meta.day
+	MetaMap["hour"] = Meta.hour
+	MetaMap["minute"] = Meta.minute
+	MetaMap["second"] = Meta.second
+	MetaMap["displayNum"] = Meta.displayNum
+	MetaMap["AlphaMessage"] = Meta.AlphaMessage
 
-	return macroMap
+	return MetaMap
 }
 
-func convert_macro_map_to_json(macroMap map[string]string) []byte {
-	macroJSON, _ := json.Marshal(macroMap)
-	return macroJSON
+func convert_Meta_map_to_json(MetaMap map[string]string) []byte {
+	MetaJSON, _ := json.Marshal(MetaMap)
+	return MetaJSON
 }
 
-func wirte_macro_to_file(filePath string, fileName string, img *image.RGBA) {
-	macro := init_macro(fileName, img)
-	macromap := convert_macro_to_map(macro)
-	macroJSON := convert_macro_map_to_json(macromap)
+func wirte_Meta_to_file(filePath string, fileName string, img *image.RGBA) {
+	Meta := init_Meta(fileName, img)
+	Metamap := convert_Meta_to_map(Meta)
+	MetaJSON := convert_Meta_map_to_json(Metamap)
 
 	im, err := exifcommon.NewIfdMappingWithStandard()
 	if err != nil {
@@ -104,7 +104,7 @@ func wirte_macro_to_file(filePath string, fileName string, img *image.RGBA) {
 	}
 	ti := exif.NewTagIndex()
 	ib := exif.NewIfdBuilder(im, ti, exifcommon.IfdStandardIfdIdentity, exifcommon.TestDefaultByteOrder)
-	err = ib.AddStandardWithName("DocumentName", string(macroJSON))
+	err = ib.AddStandardWithName("DocumentName", string(MetaJSON))
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -130,42 +130,42 @@ func wirte_macro_to_file(filePath string, fileName string, img *image.RGBA) {
 
 }
 
-func convert_json_to_macro_map(jsonData string) map[string]string {
-	var macroMap map[string]string
-	json.Unmarshal([]byte(jsonData), &macroMap)
-	return macroMap
+func convert_json_to_Meta_map(jsonData string) map[string]string {
+	var MetaMap map[string]string
+	json.Unmarshal([]byte(jsonData), &MetaMap)
+	return MetaMap
 }
 
-func convert_map_to_macro(macroMap map[string]string) ImageMacro {
-	macro := ImageMacro{}
-	macro.hash, _ = strconv.ParseUint(macroMap["hash"], 10, 64)
-	macro.hashKind = macroMap["hashKind"]
-	macro.year, _ = strconv.Atoi(macroMap["year"])
-	macro.month, _ = strconv.Atoi(macroMap["month"])
-	macro.day, _ = strconv.Atoi(macroMap["day"])
-	macro.hour, _ = strconv.Atoi(macroMap["hour"])
-	macro.minute, _ = strconv.Atoi(macroMap["minute"])
-	macro.second, _ = strconv.Atoi(macroMap["second"])
-	macro.displayNum, _ = strconv.Atoi(macroMap["displayNum"])
-	macro.AlphaMessage = macroMap["AlphaMessage"]
+func convert_map_to_Meta(MetaMap map[string]string) ImageMeta {
+	Meta := ImageMeta{}
+	Meta.hash, _ = strconv.ParseUint(MetaMap["hash"], 10, 64)
+	Meta.hashKind = MetaMap["hashKind"]
+	Meta.year, _ = strconv.Atoi(MetaMap["year"])
+	Meta.month, _ = strconv.Atoi(MetaMap["month"])
+	Meta.day, _ = strconv.Atoi(MetaMap["day"])
+	Meta.hour, _ = strconv.Atoi(MetaMap["hour"])
+	Meta.minute, _ = strconv.Atoi(MetaMap["minute"])
+	Meta.second, _ = strconv.Atoi(MetaMap["second"])
+	Meta.displayNum, _ = strconv.Atoi(MetaMap["displayNum"])
+	Meta.AlphaMessage = MetaMap["AlphaMessage"]
 
-	return macro
+	return Meta
 }
 
-func substract_macro_from_file(filePath string) (ImageMacro, error) {
-	macro_emp := ImageMacro{}
+func substract_Meta_from_file(filePath string) (ImageMeta, error) {
+	Meta_emp := ImageMeta{}
 	rawExif, err := exif.SearchFileAndExtractExif(filePath)
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println(filePath)
-		return macro_emp, err
+		return Meta_emp, err
 	}
 
 	im, err := exifcommon.NewIfdMappingWithStandard()
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println(filePath)
-		return macro_emp, err
+		return Meta_emp, err
 	}
 
 	ti := exif.NewTagIndex()
@@ -174,7 +174,7 @@ func substract_macro_from_file(filePath string) (ImageMacro, error) {
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println(filePath)
-		return macro_emp, err
+		return Meta_emp, err
 	}
 
 	tagName := "DocumentName"
@@ -185,7 +185,7 @@ func substract_macro_from_file(filePath string) (ImageMacro, error) {
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println(filePath)
-		return macro_emp, err
+		return Meta_emp, err
 	}
 
 	ite := results[0]
@@ -194,10 +194,10 @@ func substract_macro_from_file(filePath string) (ImageMacro, error) {
 	if err != nil {
 		fmt.Println(err)
 		fmt.Println(filePath)
-		return macro_emp, err
+		return Meta_emp, err
 	}
 	value := valueRaw.(string)
-	macroMap := convert_json_to_macro_map(value)
-	macro := convert_map_to_macro(macroMap)
-	return macro, nil
+	MetaMap := convert_json_to_Meta_map(value)
+	Meta := convert_map_to_Meta(MetaMap)
+	return Meta, nil
 }

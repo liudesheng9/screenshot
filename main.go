@@ -21,8 +21,28 @@ var Global_logFile *os.File
 var Global_file_lock_Mutex sync.Mutex
 var Global_file_lock []string
 
-func init_Global_file_lock() {
-	Global_file_lock = get_target_file_name(Global_constant_config.cache_path)
+type Task func(args ...interface{}) (interface{}, error)
+
+// retry method
+func retry_task(task Task, args ...interface{}) interface{} {
+	for {
+		result, err := task(args...)
+		if err == nil {
+			return result
+		} else {
+			fmt.Printf("Error: %v\n", err)
+			time.Sleep(5 * time.Second)
+		}
+	}
+}
+
+func init_Global_file_lock() error {
+	var err error
+	Global_file_lock, err = get_target_file_name(Global_constant_config.cache_path)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func initLog() {
@@ -143,13 +163,15 @@ func threadControl() {
 		// open control.txt
 		file, err := os.Open("control.txt")
 		if err != nil {
-			panic(err)
+			fmt.Printf("Control thread fatal error: %v\n", err)
+			fmt.Println("Please end the program manually.")
 		}
 		// read control.txt
 		buf := make([]byte, 100)
 		n, err := file.Read(buf)
 		if err != nil {
-			panic(err)
+			fmt.Printf("Control thread fatal error: %v\n", err)
+			fmt.Println("Please end the program manually.")
 		}
 		// close control.txt
 		file.Close()
@@ -172,10 +194,20 @@ func threadControl() {
 func thread_manage_library() {
 	for {
 		time.Sleep(5 * time.Second)
-		file_num := get_target_file_num(Global_constant_config.cache_path)
+		task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
+			input := args[0].(string)
+			return get_target_file_num(input)
+		}
+		task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
+			input := args[0].(string)
+			return get_target_file_path_name(input)
+		}
+		file_num := retry_task(task_get_target_file_num, Global_constant_config.cache_path).(int)
 		if file_num > 20 {
 			cache_path := Global_constant_config.cache_path
-			file_path_list, file_name_list := get_target_file_path_name(cache_path)
+			get_target_file_path_name_return := retry_task(task_get_target_file_path_name, cache_path).(get_target_file_path_name_return)
+			file_path_list := get_target_file_path_name_return.files
+			file_name_list := get_target_file_path_name_return.fileNames
 			for {
 				time.Sleep(5 * time.Second)
 				unlocked := check_if_locked(file_name_list)

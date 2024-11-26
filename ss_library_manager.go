@@ -16,6 +16,11 @@ type library_parameter struct {
 	path      string
 }
 
+type get_target_file_path_name_return struct {
+	files     []string
+	fileNames []string
+}
+
 func init_database() *sql.DB {
 	db, err := sql.Open("sqlite3", Global_constant_config.database_path)
 	if err != nil {
@@ -67,7 +72,7 @@ func get_target_file_path(root string) []string {
 	return files
 }
 
-func get_target_file_path_name(root string) ([]string, []string) {
+func get_target_file_path_name(root string) (get_target_file_path_name_return, error) {
 	var files []string
 	var fileNames []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -81,10 +86,13 @@ func get_target_file_path_name(root string) ([]string, []string) {
 	})
 	if err != nil {
 		log.Fatalf("Failed to walk path: %v", err)
+		return_data := get_target_file_path_name_return{nil, nil}
+		return return_data, err
 	}
-	return files, fileNames
+	return_data := get_target_file_path_name_return{files, fileNames}
+	return return_data, nil
 }
-func get_target_file_name(root string) []string {
+func get_target_file_name(root string) ([]string, error) {
 	var files []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if !strings.HasSuffix(path, ".png") {
@@ -96,11 +104,12 @@ func get_target_file_name(root string) []string {
 	})
 	if err != nil {
 		log.Fatalf("Failed to walk path: %v", err)
+		return nil, err
 	}
-	return files
+	return files, nil
 }
 
-func get_target_file_num(root string) int {
+func get_target_file_num(root string) (int, error) {
 	var i int
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		i++
@@ -108,8 +117,9 @@ func get_target_file_num(root string) int {
 	})
 	if err != nil {
 		log.Fatalf("Failed to walk path: %v", err)
+		return 0, err
 	}
-	return i
+	return i, nil
 }
 
 func init_library_parameter() library_parameter {

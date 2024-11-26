@@ -22,6 +22,7 @@ var Global_file_lock_Mutex sync.Mutex
 var Global_file_lock []string
 
 type Task func(args ...interface{}) (interface{}, error)
+type single_Task func(args ...interface{}) error
 
 // retry method
 func retry_task(task Task, args ...interface{}) interface{} {
@@ -29,6 +30,18 @@ func retry_task(task Task, args ...interface{}) interface{} {
 		result, err := task(args...)
 		if err == nil {
 			return result
+		} else {
+			fmt.Printf("Error: %v\n", err)
+			time.Sleep(5 * time.Second)
+		}
+	}
+}
+
+func retry_single_task(task single_Task, args ...interface{}) {
+	for {
+		err := task(args...)
+		if err == nil {
+			return
 		} else {
 			fmt.Printf("Error: %v\n", err)
 			time.Sleep(5 * time.Second)
@@ -214,7 +227,7 @@ func thread_manage_library() {
 				fmt.Println("unlocked : ", unlocked)
 				if unlocked {
 					remove_lock(file_name_list)
-					manage_library(file_path_list)
+					insert_library(file_path_list)
 					break
 				} else {
 					continue

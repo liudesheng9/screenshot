@@ -137,11 +137,7 @@ func hashStringSHA256(input string) string {
 	return hex.EncodeToString(hashBytes)
 }
 
-func manage_library(file_list []string) {
-	// library_parameter := init_library_parameter()
-	// cache_path := Global_constant_config.cache_path
-	// file_list := get_target_file_path(cache_path)
-
+func create_database() error {
 	createTableSQL := `
 	CREATE TABLE IF NOT EXISTS screenshots (
 		id TEXT PRIMARY KEY NOT NULL,
@@ -159,8 +155,20 @@ func manage_library(file_list []string) {
 	_, err := Global_database.Exec(createTableSQL)
 	if err != nil {
 		log.Fatalf("Failed to create table: %v", err)
+		return err
 	}
 	fmt.Println("Table created successfully")
+	return nil
+}
+
+func insert_library(file_list []string) {
+	// library_parameter := init_library_parameter()
+	// cache_path := Global_constant_config.cache_path
+	// file_list := get_target_file_path(cache_path)
+	single_task_create_database := func(args ...interface{}) error {
+		return create_database()
+	}
+	retry_single_task(single_task_create_database)
 	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
 	for _, file := range file_list {

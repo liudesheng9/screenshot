@@ -242,6 +242,41 @@ func thread_manage_library() {
 	}
 }
 
+func thread_memimg_checking() {
+	mem_check_Ticker := time.NewTicker(5 * time.Minute)
+	status_Ticker := time.NewTicker(5 * time.Second)
+loop:
+	for {
+		select {
+		case <-mem_check_Ticker.C:
+			go func() {
+				memimg_checking_robot()
+			}()
+
+		case <-status_Ticker.C:
+			if Globalsig_ss == 0 {
+				break loop
+			}
+
+		default:
+			time.Sleep(1 * time.Second)
+		}
+	}
+}
+
+func thread_tidy_data_database() {
+	single_task_tidy_data_database := func(args ...interface{}) error {
+		return tidy_data_database()
+	}
+	for {
+		time.Sleep(5 * time.Second)
+		retry_single_task(single_task_tidy_data_database)
+		if Globalsig_ss == 0 {
+			break
+		}
+	}
+}
+
 func init_program() {
 	// autostartInit()
 	initLog()
@@ -254,7 +289,7 @@ func init_program() {
 	if err != nil {
 		panic(err)
 	}
-	Globalsig_ss = 0
+	Globalsig_ss = 1
 	Global_database = init_database()
 }
 
@@ -269,7 +304,7 @@ func main() {
 	// gui_window := startGUI()
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(5)
 	go func() {
 		threadScreenshot()
 		wg.Done()
@@ -280,6 +315,14 @@ func main() {
 	}()
 	go func() {
 		thread_manage_library()
+		wg.Done()
+	}()
+	go func() {
+		thread_memimg_checking()
+		wg.Done()
+	}()
+	go func() {
+		thread_tidy_data_database()
 		wg.Done()
 	}()
 	wg.Wait()

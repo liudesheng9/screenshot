@@ -169,7 +169,7 @@ func insert_data_database(file string) error {
 	if err != nil {
 		_, err = Global_database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
 		if err != nil {
-			log.Fatalf("Failed to insert: %v", err)
+			fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, hashStringSHA256(filepath.Base(file)))
 			return err
 		}
 		return nil
@@ -179,14 +179,13 @@ func insert_data_database(file string) error {
 	Meta_map["file_name"] = fileName
 	_, err = Global_database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
 	if err != nil {
-		log.Fatalf("Failed to insert: %v", err)
+		fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, hashStringSHA256(filepath.Base(file)))
 		return err
 	}
 	return nil
 }
 
-func insert_data_database_worker_manager(file_list []string) {
-	const numWorkers = 3
+func insert_data_database_worker_manager(file_list []string, numWorkers int) {
 	numTasks := len(file_list)
 
 	single_task_insert_data_database := func(args ...interface{}) error {
@@ -216,6 +215,27 @@ func insert_data_database_worker_manager(file_list []string) {
 	wg.Wait()
 }
 
+func remove_cache_to_memimg(file string) error {
+	img_path := Global_constant_config.img_path
+	fileName := filepath.Base(file)
+	newPath := filepath.Join(img_path, fileName)
+	err := os.Rename(file, newPath)
+	if err != nil {
+		log.Fatalf("Failed to move file: %v", err)
+		// return err
+	}
+	return nil
+}
+
+func remove_cache_to_memimg_manager(file_list []string) {
+	single_task_remove_cache_to_memimg := func(args ...interface{}) error {
+		return remove_cache_to_memimg(args[0].(string))
+	}
+	for _, file := range file_list {
+		retry_single_task(single_task_remove_cache_to_memimg, file)
+	}
+}
+
 func insert_library(file_list []string) {
 	// library_parameter := init_library_parameter()
 	// cache_path := Global_constant_config.cache_path
@@ -224,17 +244,95 @@ func insert_library(file_list []string) {
 		return create_database()
 	}
 	retry_single_task(single_task_create_database)
-	insert_data_database_worker_manager(file_list)
+	insert_data_database_worker_manager(file_list, 3)
 
-	img_path := Global_constant_config.img_path
-	// move files to img_path
-	for _, file := range file_list {
-		fileName := filepath.Base(file)
-		newPath := filepath.Join(img_path, fileName)
-		err := os.Rename(file, newPath)
-		if err != nil {
-			log.Fatalf("Failed to move file: %v", err)
-			// return err
+	remove_cache_to_memimg_manager(file_list)
+}
+
+func query_data_exists_database(file string) (bool, error) {
+	filename := filepath.Base(file)
+	query_file_name := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE file_name = ?)"
+	query_hashSHA256 := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ?)"
+	var exists_file_name bool
+	var exists_hashSHA256 bool
+	err := Global_database.QueryRow(query_file_name, filename).Scan(&exists_file_name)
+	if err != nil {
+		log.Fatalf("Failed to query: %v", err)
+		return false, err
+	}
+	err = Global_database.QueryRow(query_hashSHA256, hashStringSHA256(filename)).Scan(&exists_hashSHA256)
+	if err != nil {
+		log.Fatalf("Failed to query: %v", err)
+		return false, err
+	}
+	exists := exists_file_name || exists_hashSHA256
+	return exists, nil
+}
+
+func query_data_insert_database(file string) error {
+	task_query_data_exists_database := func(args ...interface{}) (interface{}, error) {
+		return query_data_exists_database(args[0].(string))
+	}
+	exists := retry_task(task_query_data_exists_database, file).(bool)
+	if exists {
+		return nil
+	}
+	err := insert_data_database(file)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func insert_data_database_worker_manager_with_exist_bool(file_list []string, numWorkers int) {
+	numTasks := len(file_list)
+
+	single_task_query_data_insert_database := func(args ...interface{}) error {
+		return query_data_insert_database(args[0].(string))
+	}
+	var wg sync.WaitGroup
+
+	tasks := make(chan string, numTasks)
+
+	worker := func(id int, in <-chan string, wg *sync.WaitGroup) {
+		defer wg.Done()
+		for file := range in {
+			retry_single_task(single_task_query_data_insert_database, file)
 		}
 	}
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(i, tasks, &wg)
+	}
+	for _, file := range file_list {
+		tasks <- file
+	}
+
+	// close task channel
+	close(tasks)
+	wg.Wait()
+}
+
+func memimg_checking_robot() {
+	img_path := Global_constant_config.img_path
+	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
+		input := args[0].(string)
+		return get_target_file_path_name(input)
+	}
+	get_target_file_path_name_return_img_path := retry_task(task_get_target_file_path_name, img_path).(get_target_file_path_name_return)
+	file_path_list := get_target_file_path_name_return_img_path.files
+
+	insert_data_database_worker_manager_with_exist_bool(file_path_list, 10)
+	fmt.Println("memimg_checking_robot done round")
+}
+
+func tidy_data_database() error {
+	deleteSQL := `DELETE FROM screenshots WHERE file_name IS NULL`
+	_, err := Global_database.Exec(deleteSQL)
+	if err != nil {
+		fmt.Printf("Failed to delete: %v\n", err)
+		return err
+	}
+	return nil
 }

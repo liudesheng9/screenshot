@@ -147,7 +147,9 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 func threadScreenshot() {
 	map_image := make(map[int]*image.RGBA)
 	for {
-		screenshotExec(map_image)
+		go func() {
+			screenshotExec(map_image)
+		}()
 		time.Sleep(5 * time.Second)
 		if Globalsig_ss == 1 {
 			continue

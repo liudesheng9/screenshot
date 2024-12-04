@@ -80,7 +80,7 @@ func closeLog() {
 func initControlFile() {
 	file, err := os.Create("control.txt")
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
 	}
 	file.WriteString("1")
 	defer file.Close()
@@ -127,10 +127,11 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 		ahash, _ := AverageHash(img)
 		fileName := fmt.Sprintf("%s_%d_%dx%d_%d.png", currentTime, i, bounds.Dx(), bounds.Dy(), ahash.hash)
 		filePath := fmt.Sprintf("./cache/%s", fileName)
-		file, err := os.Create(filePath)
-		if err != nil {
-			panic(err)
+		task_os_create := func(args ...interface{}) (interface{}, error) {
+			file, err := os.Create(args[0].(string))
+			return file, err
 		}
+		file := retry_task(task_os_create, filePath).(*os.File)
 		defer file.Close()
 		png.Encode(file, img)
 
@@ -150,7 +151,7 @@ func threadScreenshot() {
 		go func() {
 			screenshotExec(map_image)
 		}()
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 		if Globalsig_ss == 1 {
 			continue
 		}
@@ -172,40 +173,47 @@ func threadScreenshot() {
 	}
 }
 
-func threadControl() {
-	for {
-		time.Sleep(5 * time.Second)
-		// open control.txt
-		file, err := os.Open("control.txt")
-		if err != nil {
-			fmt.Printf("Control thread fatal error: %v\n", err)
-			fmt.Println("Please end the program manually.")
-		}
-		// read control.txt
-		buf := make([]byte, 100)
-		n, err := file.Read(buf)
-		if err != nil {
-			fmt.Printf("Control thread fatal error: %v\n", err)
-			fmt.Println("Please end the program manually.")
-		}
-		// close control.txt
-		file.Close()
-		control := string(buf[:n])
-		if control == "0" {
-			Globalsig_ss = 0
-			break
-		}
-		if control == "2" {
-			Globalsig_ss = 2
-			continue
-		}
-		if control == "1" {
-			Globalsig_ss = 1
-			continue
+/*
+	func threadControl() {
+		for {
+			time.Sleep(5 * time.Second)
+			// open control.txt
+			file, err := os.Open("control.txt")
+			if err != nil {
+				fmt.Printf("Control thread fatal error: %v\n", err)
+				fmt.Println("Please end the program manually.")
+			}
+			// read control.txt
+			buf := make([]byte, 100)
+			n, err := file.Read(buf)
+			if err != nil {
+				fmt.Printf("Control thread fatal error: %v\n", err)
+				fmt.Println("Please end the program manually.")
+			}
+			// close control.txt
+			file.Close()
+			control := string(buf[:n])
+			if control == "0" {
+				Global_sig_ss_Mutex.Lock()
+				Globalsig_ss = 0
+				Global_sig_ss_Mutex.Unlock()
+				break
+			}
+			if control == "2" {
+				Global_sig_ss_Mutex.Lock()
+				Globalsig_ss = 2
+				Global_sig_ss_Mutex.Unlock()
+				continue
+			}
+			if control == "1" {
+				Global_sig_ss_Mutex.Lock()
+				Globalsig_ss = 1
+				Global_sig_ss_Mutex.Unlock()
+				continue
+			}
 		}
 	}
-}
-
+*/
 func thread_manage_library() {
 	task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
@@ -218,7 +226,7 @@ func thread_manage_library() {
 	for {
 		time.Sleep(5 * time.Second)
 		file_num := retry_task(task_get_target_file_num, Global_constant_config.cache_path).(int)
-		if file_num > 20 {
+		if file_num > 50 {
 			cache_path := Global_constant_config.cache_path
 			get_target_file_path_name_return := retry_task(task_get_target_file_path_name, cache_path).(get_target_file_path_name_return)
 			file_path_list := get_target_file_path_name_return.files
@@ -243,7 +251,7 @@ func thread_manage_library() {
 }
 
 func thread_memimg_checking() {
-	mem_check_Ticker := time.NewTicker(5 * time.Minute)
+	mem_check_Ticker := time.NewTicker(20 * time.Minute)
 	status_Ticker := time.NewTicker(5 * time.Second)
 loop:
 	for {
@@ -277,6 +285,10 @@ func thread_tidy_data_database() {
 	}
 }
 
+func thread_tcp_communication() {
+	control_process_tcp()
+}
+
 func init_program() {
 	// autostartInit()
 	initLog()
@@ -287,7 +299,7 @@ func init_program() {
 	init_Global_file_lock()
 
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
 	}
 	Globalsig_ss = 1
 	Global_database = init_database()
@@ -309,10 +321,12 @@ func main() {
 		threadScreenshot()
 		wg.Done()
 	}()
-	go func() {
-		threadControl()
-		wg.Done()
-	}()
+	/*
+		go func() {
+			threadControl()
+			wg.Done()
+		}()
+	*/
 	go func() {
 		thread_manage_library()
 		wg.Done()
@@ -323,6 +337,10 @@ func main() {
 	}()
 	go func() {
 		thread_tidy_data_database()
+		wg.Done()
+	}()
+	go func() {
+		thread_tcp_communication()
 		wg.Done()
 	}()
 	wg.Wait()

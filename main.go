@@ -16,6 +16,7 @@ import (
 var Globalsig_ss int
 var Global_constant_config ss_constant_config
 var Global_database *sql.DB
+var Global_database_net *sql.DB
 var Global_sig_ss_Mutex sync.Mutex
 var Global_logFile *os.File
 var Global_file_lock_Mutex sync.Mutex
@@ -303,11 +304,13 @@ func init_program() {
 	}
 	Globalsig_ss = 1
 	Global_database = init_database()
+	Global_database_net = init_database()
 }
 
 func close_program() {
 	closeLog()
 	Global_database.Close()
+	Global_database_net.Close()
 }
 
 func main() {

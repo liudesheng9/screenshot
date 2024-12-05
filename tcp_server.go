@@ -25,28 +25,42 @@ func excute_recv_command(safe_conn safe_connection, recv string) {
 		Global_sig_ss_Mutex.Lock()
 		Globalsig_ss = 0
 		Global_sig_ss_Mutex.Unlock()
+		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("set stop"))
+		safe_conn.lock.Unlock()
 		return
 	}
 	if recv == "1" {
 		Global_sig_ss_Mutex.Lock()
 		Globalsig_ss = 1
 		Global_sig_ss_Mutex.Unlock()
+		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("set start"))
+		safe_conn.lock.Unlock()
 		return
 	}
 	if recv == "2" {
 		Global_sig_ss_Mutex.Lock()
 		Globalsig_ss = 2
 		Global_sig_ss_Mutex.Unlock()
+		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("set pause"))
+		safe_conn.lock.Unlock()
 		return
 	}
 	if recv == "hello server" {
+		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("1"))
+		safe_conn.lock.Unlock()
 		return
 	}
+	if strings.Split(recv, " ")[0] == "sql" {
+		execute_sql(safe_conn, recv)
+		return
+	}
+	safe_conn.lock.Lock()
 	safe_conn.conn.Write([]byte("received: " + recv))
+	safe_conn.lock.Unlock()
 }
 
 func process_tcp(safe_conn safe_connection) {
@@ -65,9 +79,7 @@ func process_tcp(safe_conn safe_connection) {
 			break
 		}
 		go func() {
-			safe_conn.lock.Lock()
 			excute_recv_command(safe_conn, recv)
-			safe_conn.lock.Unlock()
 		}()
 	}
 

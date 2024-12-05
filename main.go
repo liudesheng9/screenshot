@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/png"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,12 @@ func retry_single_task(task single_Task, args ...interface{}) {
 			time.Sleep(5 * time.Second)
 		}
 	}
+}
+
+type date struct {
+	year  int
+	month int
+	day   int
 }
 
 func init_Global_file_lock() error {
@@ -99,6 +106,18 @@ func getDatetime() string {
 	currentTimeStr = currentTimeStr[:15]
 
 	return currentTimeStr
+}
+
+func decode_dateTimeStr(dateTimeStr string) date {
+	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
+		return strconv.Atoi(args[0].(string))
+	}
+	year := retry_task(task_strconv_atoi, dateTimeStr[:4]).(int)
+	month := retry_task(task_strconv_atoi, dateTimeStr[4:6]).(int)
+	day := retry_task(task_strconv_atoi, dateTimeStr[6:8]).(int)
+
+	return date{year, month, day}
+
 }
 
 func screenshotExec(map_image map[int]*image.RGBA) {

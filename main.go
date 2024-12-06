@@ -35,6 +35,9 @@ func retry_task(task Task, args ...interface{}) interface{} {
 		} else {
 			fmt.Printf("Error: %v\n", err)
 			time.Sleep(5 * time.Second)
+			if Globalsig_ss == 0 {
+				return result
+			}
 		}
 	}
 }
@@ -47,6 +50,9 @@ func retry_single_task(task single_Task, args ...interface{}) {
 		} else {
 			fmt.Printf("Error: %v\n", err)
 			time.Sleep(5 * time.Second)
+			if Globalsig_ss == 0 {
+				return
+			}
 		}
 	}
 }
@@ -171,6 +177,7 @@ func threadScreenshot() {
 		go func() {
 			screenshotExec(map_image)
 		}()
+		// time_duration := time.Duration(Global_constant_config.screenshot_second) * time.Second
 		time.Sleep(2 * time.Second)
 		if Globalsig_ss == 1 {
 			continue
@@ -312,7 +319,9 @@ func thread_tcp_communication() {
 func init_program() {
 	// autostartInit()
 	initLog()
+	// Global_constant_config = init_ss_constant_config_from_toml()
 	Global_constant_config.init_ss_constant_config()
+	fmt.Println(Global_constant_config.screenshot_second)
 	path_cache := Global_constant_config.cache_path
 	err := os.MkdirAll(path_cache, os.ModePerm)
 	initControlFile()

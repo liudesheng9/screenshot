@@ -1,0 +1,4 @@
+cache_path = "./cache"
+img_path = "./img"
+database_path = "./example.db"
+screenshot_second = 3

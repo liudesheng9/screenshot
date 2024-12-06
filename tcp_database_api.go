@@ -188,6 +188,38 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 	*/
 	return res, nil
 }
+
+func query_database_date_hour_count_all(date string) (map[string]int, error) {
+	date_struct := decode_dateTimeStr(date)
+	query := `
+		SELECT 
+			HOUR
+		FROM 
+			screenshots
+		WHERE 
+			YEAR = ? AND MONTH = ? AND DAY = ?
+	`
+	rows, err := Global_database_net.Query(query, strconv.Itoa(date_struct.year), strconv.Itoa(date_struct.month), strconv.Itoa(date_struct.day))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := make(map[string]int)
+	for rows.Next() {
+		var hour int
+		err = rows.Scan(&hour)
+		if err != nil {
+			return nil, err
+		}
+		if res[strconv.Itoa(hour)] == 0 {
+			res[strconv.Itoa(hour)] = 1
+		} else {
+			res[strconv.Itoa(hour)]++
+		}
+	}
+	return res, nil
+}
+
 func execute_sql(safe_conn safe_connection, recv string) {
 	recv_list := strings.Split(recv, " ")
 	if recv_list[1] == "count" && len(recv_list) == 2 {
@@ -262,6 +294,32 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		safe_conn.lock.Unlock()
 		return
 	}
+	if recv_list[1] == "count" && recv_list[2] == "date" && recv_list[3] == "hour" && recv_list[4] == "all" && len(recv_list) == 6 {
+		if len(recv_list[5]) != 8 {
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("invalid date format"))
+			safe_conn.lock.Unlock()
+			return
+		}
+		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_hour_count_all(args[0].(string))
+		}
+		res := retry_task(task_query_database_date_hour_count_all, recv_list[5]).(map[string]int)
+		write_str := ""
+		var keys []string
+		for k := range res {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, hour := range keys {
+			write_str += "\n" + "hour " + hour + ": " + strconv.Itoa(res[hour])
+		}
+		safe_conn.lock.Lock()
+		safe_conn.conn.Write([]byte(write_str))
+		safe_conn.lock.Unlock()
+		return
+	}
+
 	if recv_list[1] == "count" && recv_list[2] == "hour" && recv_list[3] == "date" && recv_list[4] == "all" && len(recv_list) == 6 {
 		if len(recv_list[5]) > 2 {
 			safe_conn.lock.Lock()

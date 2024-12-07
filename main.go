@@ -65,7 +65,7 @@ type date struct {
 
 func init_Global_file_lock() error {
 	var err error
-	Global_file_lock, err = get_target_file_name(Global_constant_config.cache_path)
+	Global_file_lock, err = get_target_file_name(Global_constant_config.cache_path, "png")
 	if err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func thread_manage_library() {
 	}
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
-		return get_target_file_path_name(input)
+		return get_target_file_path_name(input, "png")
 	}
 	for {
 		time.Sleep(5 * time.Second)
@@ -322,14 +322,23 @@ func init_program() {
 	// Global_constant_config = init_ss_constant_config_from_toml()
 	Global_constant_config.init_ss_constant_config()
 	fmt.Println(Global_constant_config.screenshot_second)
+
 	path_cache := Global_constant_config.cache_path
 	err := os.MkdirAll(path_cache, os.ModePerm)
-	initControlFile()
-	init_Global_file_lock()
-
 	if err != nil {
 		fmt.Println(err)
 	}
+
+	// path_dump := Global_constant_config.dump_path
+	path_dump := "./dump"
+	err = os.MkdirAll(path_dump, os.ModePerm)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	initControlFile()
+	init_Global_file_lock()
+
 	Globalsig_ss = 1
 	Global_database = init_database()
 	Global_database_net = init_database()

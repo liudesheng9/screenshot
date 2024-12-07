@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -16,6 +17,22 @@ var Global_conn_list_lock sync.Mutex
 type safe_connection struct {
 	conn net.Conn
 	lock *sync.Mutex
+}
+
+func dump_clean() {
+	dump_root_path := "./dump"
+	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
+		input := args[0].(string)
+		return get_target_file_path_name(input, "txt")
+	}
+	single_task_os_remove := func(args ...interface{}) error {
+		return os.Remove(args[0].(string))
+	}
+	get_target_file_path_name_return := retry_task(task_get_target_file_path_name, dump_root_path).(get_target_file_path_name_return)
+	file_path_list := get_target_file_path_name_return.files
+	for _, file_path := range file_path_list {
+		retry_single_task(single_task_os_remove, file_path)
+	}
 }
 
 func excute_recv_command(safe_conn safe_connection, recv string) {
@@ -51,6 +68,13 @@ func excute_recv_command(safe_conn safe_connection, recv string) {
 	if recv == "hello server" {
 		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("1"))
+		safe_conn.lock.Unlock()
+		return
+	}
+	if recv == "dump clean" {
+		dump_clean()
+		safe_conn.lock.Lock()
+		safe_conn.conn.Write([]byte("dump cleaned"))
 		safe_conn.lock.Unlock()
 		return
 	}

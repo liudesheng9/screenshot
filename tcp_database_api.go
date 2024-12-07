@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -220,9 +221,8 @@ func query_database_date_hour_count_all(date string) (map[string]int, error) {
 	return res, nil
 }
 
-func execute_sql(safe_conn safe_connection, recv string) {
-	recv_list := strings.Split(recv, " ")
-	if recv_list[1] == "count" && len(recv_list) == 2 {
+func execute_sql_count(safe_conn safe_connection, recv_list []string) {
+	if len(recv_list) == 0 {
 		task_query_database_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_count()
 		}
@@ -232,8 +232,8 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		safe_conn.lock.Unlock()
 		return
 	}
-	if recv_list[1] == "count" && recv_list[2] == "date" && recv_list[3] != "all" && len(recv_list) == 4 {
-		if len(recv_list[3]) != 8 {
+	if recv_list[0] == "date" && recv_list[1] != "all" && len(recv_list) == 2 {
+		if len(recv_list[1]) != 8 {
 			safe_conn.lock.Lock()
 			safe_conn.conn.Write([]byte("invalid date format"))
 			safe_conn.lock.Unlock()
@@ -242,13 +242,13 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		task_query_database_date_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count(args[0].(string))
 		}
-		count := retry_task(task_query_database_date_count, recv_list[3]).(int)
+		count := retry_task(task_query_database_date_count, recv_list[1]).(int)
 		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("total data count: " + strconv.Itoa(count)))
 		safe_conn.lock.Unlock()
 		return
 	}
-	if recv_list[1] == "count" && recv_list[2] == "date" && recv_list[3] == "all" && len(recv_list) == 4 {
+	if recv_list[0] == "date" && recv_list[1] == "all" && len(recv_list) == 2 {
 		task_query_database_date_count_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count_all()
 		}
@@ -267,8 +267,8 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		safe_conn.lock.Unlock()
 		return
 	}
-	if recv_list[1] == "count" && recv_list[2] == "hour" && recv_list[3] != "all" && len(recv_list) == 4 {
-		if len(recv_list[3]) > 2 {
+	if recv_list[0] == "hour" && recv_list[1] != "all" && len(recv_list) == 2 {
+		if len(recv_list[1]) > 2 {
 			safe_conn.lock.Lock()
 			safe_conn.conn.Write([]byte("invalid hour format"))
 			safe_conn.lock.Unlock()
@@ -277,13 +277,13 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_count(args[0].(string))
 		}
-		count := retry_task(task_query_database_hour_count, recv_list[3]).(int)
+		count := retry_task(task_query_database_hour_count, recv_list[1]).(int)
 		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte("total data count: " + strconv.Itoa(count)))
 		safe_conn.lock.Unlock()
 		return
 	}
-	if recv_list[1] == "count" && recv_list[2] == "hour" && recv_list[3] == "all" && len(recv_list) == 4 {
+	if recv_list[0] == "hour" && recv_list[1] == "all" && len(recv_list) == 2 {
 		res := query_database_hour_count_all()
 		write_str := ""
 		for hour_int := 0; hour_int < 24; hour_int++ {
@@ -294,8 +294,8 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		safe_conn.lock.Unlock()
 		return
 	}
-	if recv_list[1] == "count" && recv_list[2] == "date" && recv_list[3] == "hour" && recv_list[4] == "all" && len(recv_list) == 6 {
-		if len(recv_list[5]) != 8 {
+	if recv_list[0] == "date" && recv_list[1] == "hour" && recv_list[2] == "all" && len(recv_list) == 4 {
+		if len(recv_list[3]) != 8 {
 			safe_conn.lock.Lock()
 			safe_conn.conn.Write([]byte("invalid date format"))
 			safe_conn.lock.Unlock()
@@ -304,45 +304,300 @@ func execute_sql(safe_conn safe_connection, recv string) {
 		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_hour_count_all(args[0].(string))
 		}
-		res := retry_task(task_query_database_date_hour_count_all, recv_list[5]).(map[string]int)
+		res := retry_task(task_query_database_date_hour_count_all, recv_list[3]).(map[string]int)
 		write_str := ""
-		var keys []string
-		for k := range res {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, hour := range keys {
-			write_str += "\n" + "hour " + hour + ": " + strconv.Itoa(res[hour])
+		for hour_int := 0; hour_int < 24; hour_int++ {
+			write_str += "\n" + "hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)])
 		}
 		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte(write_str))
 		safe_conn.lock.Unlock()
 		return
 	}
-
-	if recv_list[1] == "count" && recv_list[2] == "hour" && recv_list[3] == "date" && recv_list[4] == "all" && len(recv_list) == 6 {
-		if len(recv_list[5]) > 2 {
+	if recv_list[0] == "hour" && recv_list[1] == "date" && recv_list[2] == "all" && len(recv_list) == 4 {
+		if len(recv_list[3]) > 2 {
 			safe_conn.lock.Lock()
 			safe_conn.conn.Write([]byte("invalid hour format"))
 			safe_conn.lock.Unlock()
 			return
 		}
+		task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
+			return strconv.Atoi(args[0].(string))
+		}
 		task_query_database_hour_date_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_date_count_all(args[0].(string))
 		}
-		res := retry_task(task_query_database_hour_date_all, recv_list[5]).(map[string]int)
+		res := retry_task(task_query_database_hour_date_all, recv_list[3]).(map[string]int)
 		write_str := ""
 		var keys []string
 		for k := range res {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		var keys_int []int
+		for _, k := range keys {
+			keys_int = append(keys_int, retry_task(task_strconv_atoi, k).(int))
+		}
+		sort.Ints(keys_int)
+		for i, k := range keys_int {
+			keys[i] = strconv.Itoa(k)
+		}
 		for _, date := range keys {
 			write_str += "\n" + "date " + date + ": " + strconv.Itoa(res[date])
 		}
 		safe_conn.lock.Lock()
 		safe_conn.conn.Write([]byte(write_str))
 		safe_conn.lock.Unlock()
+		return
+	}
+	safe_conn.lock.Lock()
+	safe_conn.conn.Write([]byte("invalid sql count command"))
+	safe_conn.lock.Unlock()
+}
+
+func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
+	if len(recv_list) == 0 {
+		task_query_database_count := func(args ...interface{}) (interface{}, error) {
+			return query_database_count()
+		}
+
+		count := retry_task(task_query_database_count).(int)
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+			file.Write([]byte("total data count: " + strconv.Itoa(count)))
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+		return
+	}
+	if recv_list[0] == "date" && recv_list[1] != "all" && len(recv_list) == 2 {
+		if len(recv_list[1]) != 8 {
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("invalid date format"))
+			safe_conn.lock.Unlock()
+			return
+		}
+		task_query_database_date_count := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_count(args[0].(string))
+		}
+		count := retry_task(task_query_database_date_count, recv_list[1]).(int)
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+			file.Write([]byte("total data count: " + strconv.Itoa(count)))
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+		return
+	}
+	if recv_list[0] == "date" && recv_list[1] == "all" && len(recv_list) == 2 {
+		task_query_database_date_count_all := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_count_all()
+		}
+		res := retry_task(task_query_database_date_count_all).(map[string]int)
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+
+			var keys []string
+			for k := range res {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, date := range keys {
+				file.Write([]byte("date " + date + ": " + strconv.Itoa(res[date]) + "\n"))
+			}
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+
+		return
+	}
+	if recv_list[0] == "hour" && recv_list[1] != "all" && len(recv_list) == 2 {
+		if len(recv_list[1]) > 2 {
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("invalid hour format"))
+			safe_conn.lock.Unlock()
+			return
+		}
+		task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
+			return query_database_hour_count(args[0].(string))
+		}
+		count := retry_task(task_query_database_hour_count, recv_list[1]).(int)
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+			file.Write([]byte("total data count: " + strconv.Itoa(count)))
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+
+		return
+	}
+	if recv_list[0] == "hour" && recv_list[1] == "all" && len(recv_list) == 2 {
+		res := query_database_hour_count_all()
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+
+			for hour_int := 0; hour_int < 24; hour_int++ {
+				file.Write([]byte("hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)]) + "\n"))
+			}
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+
+		return
+	}
+	if recv_list[0] == "date" && recv_list[1] == "hour" && recv_list[2] == "all" && len(recv_list) == 4 {
+		if len(recv_list[3]) != 8 {
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("invalid date format"))
+			safe_conn.lock.Unlock()
+			return
+		}
+		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_hour_count_all(args[0].(string))
+		}
+		res := retry_task(task_query_database_date_hour_count_all, recv_list[3]).(map[string]int)
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+
+			for hour_int := 0; hour_int < 24; hour_int++ {
+				file.Write([]byte("hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)]) + "\n"))
+			}
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+
+		return
+	}
+	if recv_list[0] == "hour" && recv_list[1] == "date" && recv_list[2] == "all" && len(recv_list) == 4 {
+		if len(recv_list[3]) > 2 {
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("invalid hour format"))
+			safe_conn.lock.Unlock()
+			return
+		}
+		task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
+			return strconv.Atoi(args[0].(string))
+		}
+		task_query_database_hour_date_all := func(args ...interface{}) (interface{}, error) {
+			return query_database_hour_date_count_all(args[0].(string))
+		}
+		res := retry_task(task_query_database_hour_date_all, recv_list[3]).(map[string]int)
+
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := getDatetime()
+			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file := retry_task(task_os_create, file_name).(*os.File)
+			defer file.Close()
+
+			var keys []string
+			for k := range res {
+				keys = append(keys, k)
+			}
+			var keys_int []int
+			for _, k := range keys {
+				keys_int = append(keys_int, retry_task(task_strconv_atoi, k).(int))
+			}
+			sort.Ints(keys_int)
+			for i, k := range keys_int {
+				keys[i] = strconv.Itoa(k)
+			}
+			for _, date := range keys {
+				file.Write([]byte("date " + date + ": " + strconv.Itoa(res[date]) + "\n"))
+			}
+
+			safe_conn.lock.Lock()
+			safe_conn.conn.Write([]byte("Target results dumped."))
+			safe_conn.lock.Unlock()
+		}()
+
+		return
+	}
+	safe_conn.lock.Lock()
+	safe_conn.conn.Write([]byte("invalid sql dump count command"))
+	safe_conn.lock.Unlock()
+}
+
+func execute_sql_dump(safe_conn safe_connection, recv_list []string) {
+	if recv_list[0] == "count" {
+		execute_sql_dump_count(safe_conn, recv_list[1:])
+		return
+	}
+	safe_conn.lock.Lock()
+	safe_conn.conn.Write([]byte("invalid sql dump command"))
+	safe_conn.lock.Unlock()
+}
+
+func execute_sql(safe_conn safe_connection, recv string) {
+	recv_list := strings.Split(recv, " ")
+	if recv_list[1] == "count" {
+		execute_sql_count(safe_conn, recv_list[2:])
+		return
+	}
+	if recv_list[1] == "dump" {
+		execute_sql_dump(safe_conn, recv_list[2:])
 		return
 	}
 	if recv_list[1] == "min_date" {

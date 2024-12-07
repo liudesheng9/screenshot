@@ -60,10 +60,10 @@ func remove_lock(filename_list []string) {
 	Global_file_lock_Mutex.Unlock()
 }
 
-func get_target_file_path(root string) []string {
+func get_target_file_path(root string, suffix string) []string {
 	var files []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(path, ".png") {
+		if !strings.HasSuffix(path, "."+suffix) {
 			return nil
 		}
 		files = append(files, path)
@@ -75,11 +75,11 @@ func get_target_file_path(root string) []string {
 	return files
 }
 
-func get_target_file_path_name(root string) (get_target_file_path_name_return, error) {
+func get_target_file_path_name(root string, suffix string) (get_target_file_path_name_return, error) {
 	var files []string
 	var fileNames []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(path, ".png") {
+		if !strings.HasSuffix(path, "."+suffix) {
 			return nil
 		}
 		files = append(files, path)
@@ -95,10 +95,10 @@ func get_target_file_path_name(root string) (get_target_file_path_name_return, e
 	return_data := get_target_file_path_name_return{files, fileNames}
 	return return_data, nil
 }
-func get_target_file_name(root string) ([]string, error) {
+func get_target_file_name(root string, suffix string) ([]string, error) {
 	var files []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(path, ".png") {
+		if !strings.HasSuffix(path, "."+suffix) {
 			return nil
 		}
 		fileName := filepath.Base(path)
@@ -318,7 +318,7 @@ func memimg_checking_robot() {
 	img_path := Global_constant_config.img_path
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
-		return get_target_file_path_name(input)
+		return get_target_file_path_name(input, "png")
 	}
 	get_target_file_path_name_return_img_path := retry_task(task_get_target_file_path_name, img_path).(get_target_file_path_name_return)
 	file_path_list := get_target_file_path_name_return_img_path.files

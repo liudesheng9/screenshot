@@ -368,7 +368,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
@@ -397,7 +397,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
@@ -420,7 +420,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 
@@ -458,7 +458,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
@@ -479,7 +479,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 
@@ -512,7 +512,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 
@@ -548,7 +548,7 @@ func execute_sql_dump_count(safe_conn safe_connection, recv_list []string) {
 				return file, err
 			}
 			currentTime := getDatetime()
-			file_name := "./dump" + "/" + currentTime + "_dump.txt"
+			file_name := Global_constant_config.dump_path + "/" + currentTime + "_dump.txt"
 			file := retry_task(task_os_create, file_name).(*os.File)
 			defer file.Close()
 

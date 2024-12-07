@@ -20,7 +20,7 @@ type safe_connection struct {
 }
 
 func dump_clean() {
-	dump_root_path := "./dump"
+	dump_root_path := Global_constant_config.dump_path
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
 		return get_target_file_path_name(input, "txt")

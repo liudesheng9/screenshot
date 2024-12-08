@@ -97,7 +97,7 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 	}
 }
 
-func threadScreenshot() {
+func thread_screenshot() {
 	map_image := make(map[int]*image.RGBA)
 	for {
 		go func() {
@@ -229,11 +229,21 @@ func thread_tidy_data_database() {
 	single_task_tidy_data_database := func(args ...interface{}) error {
 		return library_manager.Tidy_data_database()
 	}
+	tidy_data_database_Ticker := time.NewTicker(5 * time.Minute)
+	status_Ticker := time.NewTicker(5 * time.Second)
+loop:
 	for {
-		time.Sleep(5 * time.Second)
-		utils.Retry_single_task(single_task_tidy_data_database, Global.Globalsig_ss)
-		if *Global.Globalsig_ss == 0 {
-			break
+		select {
+		case <-tidy_data_database_Ticker.C:
+			go utils.Retry_single_task(single_task_tidy_data_database, Global.Globalsig_ss)
+
+		case <-status_Ticker.C:
+			if *Global.Globalsig_ss == 0 {
+				break loop
+			}
+
+		default:
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -290,8 +300,9 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(5)
 	go func() {
-		threadScreenshot()
+		thread_screenshot()
 		wg.Done()
+		// fmt.Println("thread_screenshot closed")
 	}()
 	/*
 		go func() {
@@ -302,18 +313,22 @@ func main() {
 	go func() {
 		thread_manage_library()
 		wg.Done()
+		// fmt.Println("thread_manage_library closed")
 	}()
 	go func() {
 		thread_memimg_checking()
 		wg.Done()
+		// fmt.Println("thread_memimg_checking closed")
 	}()
 	go func() {
 		thread_tidy_data_database()
 		wg.Done()
+		// fmt.Println("thread_tidy_data_database closed")
 	}()
 	go func() {
 		thread_tcp_communication()
 		wg.Done()
+		// fmt.Println("thread_tcp_communication closed")
 	}()
 	wg.Wait()
 	close_program()

@@ -3,6 +3,7 @@ package tcp_api
 import (
 	"os"
 	"screenshot_server/Global"
+	"screenshot_server/library_manager"
 	"screenshot_server/utils"
 	"strings"
 )
@@ -35,6 +36,20 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 		dump_clean()
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("dump cleaned"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 3 && recv_list[1] == "mem" && recv_list[2] == "check" {
+		go library_manager.Memimg_checking_robot()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("Memory image checking robot started"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 3 && recv_list[1] == "tidy" && recv_list[2] == "database" {
+		library_manager.Tidy_data_database()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("Database tidied"))
 		safe_conn.Lock.Unlock()
 		return
 	}

@@ -113,7 +113,7 @@ func control_process_tcp() {
 		listen, err := net.Listen("tcp", args[0].(string))
 		return listen, err
 	}
-	listen := utils.Retry_task(task_net_listen, Global.Globalsig_ss, "127.0.0.1:50021").(net.Listener)
+	listen := utils.Retry_task(task_net_listen, Global.Globalsig_ss, "127.0.0.1:50022").(net.Listener)
 
 	for {
 		if *Global.Globalsig_ss == 0 {

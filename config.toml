@@ -1,5 +1,5 @@
-cache_path = "./cache"
-img_path = "./img"
-dump_path = "./dump"
-database_path = "./example.db"
-screenshot_second = 3
+Cache_path = "./cache"
+Img_path = "./img"
+Dump_path = "./dump"
+Database_path = "./example.db"
+Screenshot_second = 3

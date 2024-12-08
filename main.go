@@ -7,6 +7,7 @@ import (
 	"os"
 	"screenshot_server/Global"
 	"screenshot_server/image_manipulation"
+	"screenshot_server/init_config"
 	"screenshot_server/library_manager"
 	"screenshot_server/utils"
 	"sync"
@@ -78,7 +79,7 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 		}
 		ahash, _ := image_manipulation.AverageHash(img)
 		fileName := fmt.Sprintf("%s_%d_%dx%d_%d.png", currentTime, i, bounds.Dx(), bounds.Dy(), ahash.Hash)
-		filePath := fmt.Sprintf("./cache/%s", fileName)
+		filePath := fmt.Sprintf(Global.Global_constant_config.Cache_path+"/%s", fileName)
 		task_os_create := func(args ...interface{}) (interface{}, error) {
 			file, err := os.Create(args[0].(string))
 			return file, err
@@ -255,9 +256,10 @@ func thread_tcp_communication() {
 func init_program() {
 	// autostartInit()
 	initLog()
-	// Global_constant_config = init_ss_constant_config_from_toml()
-	Global.Global_constant_config.Init_ss_constant_config()
-	fmt.Println(Global.Global_constant_config.Screenshot_second)
+	Global.Global_constant_config = init_config.Init_ss_constant_config_from_toml()
+	fmt.Println(Global.Global_constant_config)
+	// Global.Global_constant_config.Init_ss_constant_config()
+	// fmt.Println(Global.Global_constant_config.Screenshot_second)
 
 	path_cache := Global.Global_constant_config.Cache_path
 	err := os.MkdirAll(path_cache, os.ModePerm)

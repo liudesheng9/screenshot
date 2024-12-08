@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
+	"screenshot_server/utils"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -19,13 +19,8 @@ type library_parameter struct {
 	path      string
 }
 
-type get_target_file_path_name_return struct {
-	files     []string
-	fileNames []string
-}
-
 func init_database() *sql.DB {
-	db, err := sql.Open("sqlite3", Global_constant_config.database_path)
+	db, err := sql.Open("sqlite3", Global_constant_config.Database_path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -60,74 +55,9 @@ func remove_lock(filename_list []string) {
 	Global_file_lock_Mutex.Unlock()
 }
 
-func get_target_file_path(root string, suffix string) []string {
-	var files []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(path, "."+suffix) {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	})
-	if err != nil {
-		log.Fatalf("Failed to walk path: %v", err)
-	}
-	return files
-}
-
-func get_target_file_path_name(root string, suffix string) (get_target_file_path_name_return, error) {
-	var files []string
-	var fileNames []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(path, "."+suffix) {
-			return nil
-		}
-		files = append(files, path)
-		fileName := filepath.Base(path)
-		fileNames = append(fileNames, fileName)
-		return nil
-	})
-	if err != nil {
-		log.Fatalf("Failed to walk path: %v", err)
-		return_data := get_target_file_path_name_return{nil, nil}
-		return return_data, err
-	}
-	return_data := get_target_file_path_name_return{files, fileNames}
-	return return_data, nil
-}
-func get_target_file_name(root string, suffix string) ([]string, error) {
-	var files []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(path, "."+suffix) {
-			return nil
-		}
-		fileName := filepath.Base(path)
-		files = append(files, fileName)
-		return nil
-	})
-	if err != nil {
-		log.Fatalf("Failed to walk path: %v", err)
-		return nil, err
-	}
-	return files, nil
-}
-
-func get_target_file_num(root string) (int, error) {
-	var i int
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		i++
-		return nil
-	})
-	if err != nil {
-		log.Fatalf("Failed to walk path: %v", err)
-		return 0, err
-	}
-	return i, nil
-}
-
 func init_library_parameter() library_parameter {
 	library_parameter := library_parameter{}
-	library_parameter.path = Global_constant_config.cache_path
+	library_parameter.path = Global_constant_config.Cache_path
 	return library_parameter
 }
 
@@ -198,7 +128,7 @@ func insert_data_database_worker_manager(file_list []string, numWorkers int) {
 	worker := func(id int, in <-chan string, wg *sync.WaitGroup) {
 		defer wg.Done()
 		for file := range in {
-			retry_single_task(single_task_insert_data_database, file)
+			utils.Retry_single_task(single_task_insert_data_database, Globalsig_ss, file)
 		}
 	}
 
@@ -216,7 +146,7 @@ func insert_data_database_worker_manager(file_list []string, numWorkers int) {
 }
 
 func remove_cache_to_memimg(file string) error {
-	img_path := Global_constant_config.img_path
+	img_path := Global_constant_config.Img_path
 	fileName := filepath.Base(file)
 	newPath := filepath.Join(img_path, fileName)
 	err := os.Rename(file, newPath)
@@ -232,7 +162,7 @@ func remove_cache_to_memimg_manager(file_list []string) {
 		return remove_cache_to_memimg(args[0].(string))
 	}
 	for _, file := range file_list {
-		retry_single_task(single_task_remove_cache_to_memimg, file)
+		utils.Retry_single_task(single_task_remove_cache_to_memimg, Globalsig_ss, file)
 	}
 }
 
@@ -243,7 +173,7 @@ func insert_library(file_list []string) {
 	single_task_create_database := func(args ...interface{}) error {
 		return create_database()
 	}
-	retry_single_task(single_task_create_database)
+	utils.Retry_single_task(single_task_create_database, Globalsig_ss)
 	insert_data_database_worker_manager(file_list, 3)
 
 	remove_cache_to_memimg_manager(file_list)
@@ -273,7 +203,7 @@ func query_data_insert_database(file string) error {
 	task_query_data_exists_database := func(args ...interface{}) (interface{}, error) {
 		return query_data_exists_database(args[0].(string))
 	}
-	exists := retry_task(task_query_data_exists_database, file).(bool)
+	exists := utils.Retry_task(task_query_data_exists_database, Globalsig_ss, file).(bool)
 	if exists {
 		return nil
 	}
@@ -297,7 +227,7 @@ func insert_data_database_worker_manager_with_exist_bool(file_list []string, num
 	worker := func(id int, in <-chan string, wg *sync.WaitGroup) {
 		defer wg.Done()
 		for file := range in {
-			retry_single_task(single_task_query_data_insert_database, file)
+			utils.Retry_single_task(single_task_query_data_insert_database, Globalsig_ss, file)
 		}
 	}
 
@@ -315,13 +245,13 @@ func insert_data_database_worker_manager_with_exist_bool(file_list []string, num
 }
 
 func memimg_checking_robot() {
-	img_path := Global_constant_config.img_path
+	img_path := Global_constant_config.Img_path
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
-		return get_target_file_path_name(input, "png")
+		return utils.Get_target_file_path_name(input, "png")
 	}
-	get_target_file_path_name_return_img_path := retry_task(task_get_target_file_path_name, img_path).(get_target_file_path_name_return)
-	file_path_list := get_target_file_path_name_return_img_path.files
+	get_target_file_path_name_return_img_path := utils.Retry_task(task_get_target_file_path_name, Globalsig_ss, img_path).(utils.Get_target_file_path_name_return)
+	file_path_list := get_target_file_path_name_return_img_path.Files
 
 	insert_data_database_worker_manager_with_exist_bool(file_path_list, 10)
 	fmt.Println("memimg_checking_robot done round")

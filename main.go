@@ -6,8 +6,7 @@ import (
 	"image"
 	"image/png"
 	"os"
-	"strconv"
-	"strings"
+	"screenshot_server/utils"
 	"sync"
 	"time"
 
@@ -15,7 +14,7 @@ import (
 )
 
 var Globalsig_ss int
-var Global_constant_config ss_constant_config
+var Global_constant_config utils.Ss_constant_config
 var Global_database *sql.DB
 var Global_database_net *sql.DB
 var Global_sig_ss_Mutex sync.Mutex
@@ -23,49 +22,9 @@ var Global_logFile *os.File
 var Global_file_lock_Mutex sync.Mutex
 var Global_file_lock []string
 
-type Task func(args ...interface{}) (interface{}, error)
-type single_Task func(args ...interface{}) error
-
-// retry method
-func retry_task(task Task, args ...interface{}) interface{} {
-	for {
-		result, err := task(args...)
-		if err == nil {
-			return result
-		} else {
-			fmt.Printf("Error: %v\n", err)
-			time.Sleep(5 * time.Second)
-			if Globalsig_ss == 0 {
-				return result
-			}
-		}
-	}
-}
-
-func retry_single_task(task single_Task, args ...interface{}) {
-	for {
-		err := task(args...)
-		if err == nil {
-			return
-		} else {
-			fmt.Printf("Error: %v\n", err)
-			time.Sleep(5 * time.Second)
-			if Globalsig_ss == 0 {
-				return
-			}
-		}
-	}
-}
-
-type date struct {
-	year  int
-	month int
-	day   int
-}
-
 func init_Global_file_lock() error {
 	var err error
-	Global_file_lock, err = get_target_file_name(Global_constant_config.cache_path, "png")
+	Global_file_lock, err = utils.Get_target_file_name(Global_constant_config.Cache_path, "png")
 	if err != nil {
 		return err
 	}
@@ -81,12 +40,12 @@ func initLog() {
 	Global_logFile = logFile
 	os.Stdout = Global_logFile
 
-	fmt.Println("Datetime: " + getDatetime())
+	fmt.Println("Datetime: " + utils.GetDatetime())
 	fmt.Println("Begin recording")
 }
 
 func closeLog() {
-	fmt.Println("Datetime: " + getDatetime())
+	fmt.Println("Datetime: " + utils.GetDatetime())
 	fmt.Println("End recording")
 	Global_logFile.Close()
 }
@@ -100,35 +59,9 @@ func initControlFile() {
 	defer file.Close()
 }
 
-func getDatetime() string {
-	currentTime := time.Now()
-	currentTimeStr := currentTime.String()
-
-	currentTimeStr = strings.Replace(currentTimeStr, ":", "_", -1)
-	currentTimeStr = strings.Replace(currentTimeStr, "-", "_", -1)
-	currentTimeStr = strings.Replace(currentTimeStr, " ", "*", -1)
-	currentTimeStr = strings.Replace(currentTimeStr, "_", "", -1)
-	currentTimeStr = strings.Replace(currentTimeStr, "*", "_", -1)
-	currentTimeStr = currentTimeStr[:15]
-
-	return currentTimeStr
-}
-
-func decode_dateTimeStr(dateTimeStr string) date {
-	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
-		return strconv.Atoi(args[0].(string))
-	}
-	year := retry_task(task_strconv_atoi, dateTimeStr[:4]).(int)
-	month := retry_task(task_strconv_atoi, dateTimeStr[4:6]).(int)
-	day := retry_task(task_strconv_atoi, dateTimeStr[6:8]).(int)
-
-	return date{year, month, day}
-
-}
-
 func screenshotExec(map_image map[int]*image.RGBA) {
 	n := screenshot.NumActiveDisplays()
-	currentTime := getDatetime()
+	currentTime := utils.GetDatetime()
 	for i := 0; i < n; i++ {
 		bounds := screenshot.GetDisplayBounds(i)
 
@@ -157,7 +90,7 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 			file, err := os.Create(args[0].(string))
 			return file, err
 		}
-		file := retry_task(task_os_create, filePath).(*os.File)
+		file := utils.Retry_task(task_os_create, Globalsig_ss, filePath).(*os.File)
 		defer file.Close()
 		png.Encode(file, img)
 
@@ -244,20 +177,20 @@ func threadScreenshot() {
 func thread_manage_library() {
 	task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
-		return get_target_file_num(input)
+		return utils.Get_target_file_num(input)
 	}
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
-		return get_target_file_path_name(input, "png")
+		return utils.Get_target_file_path_name(input, "png")
 	}
 	for {
 		time.Sleep(5 * time.Second)
-		file_num := retry_task(task_get_target_file_num, Global_constant_config.cache_path).(int)
+		file_num := utils.Retry_task(task_get_target_file_num, Globalsig_ss, Global_constant_config.Cache_path).(int)
 		if file_num > 50 {
-			cache_path := Global_constant_config.cache_path
-			get_target_file_path_name_return := retry_task(task_get_target_file_path_name, cache_path).(get_target_file_path_name_return)
-			file_path_list := get_target_file_path_name_return.files
-			file_name_list := get_target_file_path_name_return.fileNames
+			cache_path := Global_constant_config.Cache_path
+			get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Globalsig_ss, cache_path).(utils.Get_target_file_path_name_return)
+			file_path_list := get_target_file_path_name_return.Files
+			file_name_list := get_target_file_path_name_return.FileNames
 			for {
 				time.Sleep(5 * time.Second)
 				unlocked := check_if_locked(file_name_list)
@@ -278,7 +211,7 @@ func thread_manage_library() {
 }
 
 func thread_memimg_checking() {
-	mem_check_Ticker := time.NewTicker(20 * time.Minute)
+	mem_check_Ticker := time.NewTicker(1 * time.Hour)
 	status_Ticker := time.NewTicker(5 * time.Second)
 loop:
 	for {
@@ -305,7 +238,7 @@ func thread_tidy_data_database() {
 	}
 	for {
 		time.Sleep(5 * time.Second)
-		retry_single_task(single_task_tidy_data_database)
+		utils.Retry_single_task(single_task_tidy_data_database, Globalsig_ss)
 		if Globalsig_ss == 0 {
 			break
 		}
@@ -320,10 +253,10 @@ func init_program() {
 	// autostartInit()
 	initLog()
 	// Global_constant_config = init_ss_constant_config_from_toml()
-	Global_constant_config.init_ss_constant_config()
-	fmt.Println(Global_constant_config.screenshot_second)
+	Global_constant_config.Init_ss_constant_config()
+	fmt.Println(Global_constant_config.Screenshot_second)
 
-	path_cache := Global_constant_config.cache_path
+	path_cache := Global_constant_config.Cache_path
 	err := os.MkdirAll(path_cache, os.ModePerm)
 	if err != nil {
 		fmt.Println(err)

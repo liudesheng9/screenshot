@@ -1,4 +1,4 @@
-module hello
+module screenshot_server
 
 go 1.23.3
 

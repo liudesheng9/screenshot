@@ -4,93 +4,70 @@ import (
 	"bufio"
 	"fmt"
 	"net"
-	"os"
 	"runtime"
+	"screenshot_server/tcp_api"
+	"screenshot_server/utils"
 	"strings"
 	"sync"
 	"time"
 )
 
-var Global_conn_list []*safe_connection
+var Global_conn_list []*utils.Safe_connection
 var Global_conn_list_lock sync.Mutex
 
-type safe_connection struct {
-	conn net.Conn
-	lock *sync.Mutex
-}
-
-func dump_clean() {
-	dump_root_path := Global_constant_config.dump_path
-	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
-		input := args[0].(string)
-		return get_target_file_path_name(input, "txt")
-	}
-	single_task_os_remove := func(args ...interface{}) error {
-		return os.Remove(args[0].(string))
-	}
-	get_target_file_path_name_return := retry_task(task_get_target_file_path_name, dump_root_path).(get_target_file_path_name_return)
-	file_path_list := get_target_file_path_name_return.files
-	for _, file_path := range file_path_list {
-		retry_single_task(single_task_os_remove, file_path)
-	}
-}
-
-func excute_recv_command(safe_conn safe_connection, recv string) {
+func excute_recv_command(safe_conn utils.Safe_connection, recv string) {
 	// delete start space and end space
 	recv = strings.TrimSpace(recv)
 	if recv == "0" {
 		Global_sig_ss_Mutex.Lock()
 		Globalsig_ss = 0
 		Global_sig_ss_Mutex.Unlock()
-		safe_conn.lock.Lock()
-		safe_conn.conn.Write([]byte("set stop"))
-		safe_conn.lock.Unlock()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("set stop"))
+		safe_conn.Lock.Unlock()
 		return
 	}
 	if recv == "1" {
 		Global_sig_ss_Mutex.Lock()
 		Globalsig_ss = 1
 		Global_sig_ss_Mutex.Unlock()
-		safe_conn.lock.Lock()
-		safe_conn.conn.Write([]byte("set start"))
-		safe_conn.lock.Unlock()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("set start"))
+		safe_conn.Lock.Unlock()
 		return
 	}
 	if recv == "2" {
 		Global_sig_ss_Mutex.Lock()
 		Globalsig_ss = 2
 		Global_sig_ss_Mutex.Unlock()
-		safe_conn.lock.Lock()
-		safe_conn.conn.Write([]byte("set pause"))
-		safe_conn.lock.Unlock()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("set pause"))
+		safe_conn.Lock.Unlock()
 		return
 	}
 	if recv == "hello server" {
-		safe_conn.lock.Lock()
-		safe_conn.conn.Write([]byte("1"))
-		safe_conn.lock.Unlock()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("1"))
+		safe_conn.Lock.Unlock()
 		return
 	}
-	if recv == "dump clean" {
-		dump_clean()
-		safe_conn.lock.Lock()
-		safe_conn.conn.Write([]byte("dump cleaned"))
-		safe_conn.lock.Unlock()
+	if strings.Split(recv, " ")[0] == "man" {
+		tcp_api.Execute_manager(safe_conn, recv, Global_constant_config)
 		return
 	}
 	if strings.Split(recv, " ")[0] == "sql" {
-		execute_sql(safe_conn, recv)
+		tcp_api.Execute_sql(safe_conn, recv, Global_database_net)
 		return
 	}
-	safe_conn.lock.Lock()
-	safe_conn.conn.Write([]byte("received: " + recv))
-	safe_conn.lock.Unlock()
+	safe_conn.Lock.Lock()
+	safe_conn.Conn.Write([]byte("received: " + recv))
+	safe_conn.Lock.Unlock()
 }
 
-func process_tcp(safe_conn safe_connection) {
+func process_tcp(safe_conn utils.Safe_connection) {
 	//关闭连接
 	for {
-		reader := bufio.NewReader(safe_conn.conn)
+		reader := bufio.NewReader(safe_conn.Conn)
 		var buf [128]byte
 		n, err := reader.Read(buf[:])
 		if err != nil {
@@ -109,15 +86,15 @@ func process_tcp(safe_conn safe_connection) {
 
 	Global_conn_list_lock.Lock()
 
-	safe_conn.lock.Lock()
-	safe_conn.conn.Write([]byte("server close"))
-	_ = safe_conn.conn.Close()
-	safe_conn.lock.Unlock()
+	safe_conn.Lock.Lock()
+	safe_conn.Conn.Write([]byte("server close"))
+	_ = safe_conn.Conn.Close()
+	safe_conn.Lock.Unlock()
 
 	for i, v := range Global_conn_list {
 		if v == &safe_conn {
 			Global_conn_list = append(Global_conn_list[:i], Global_conn_list[i+1:]...)
-			v.lock = nil
+			v.Lock = nil
 			//release safe_conn
 			v = nil
 			runtime.GC()
@@ -133,18 +110,18 @@ func control_process_tcp() {
 		listen, err := net.Listen("tcp", args[0].(string))
 		return listen, err
 	}
-	listen := retry_task(task_net_listen, "127.0.0.1:50021").(net.Listener)
+	listen := utils.Retry_task(task_net_listen, Globalsig_ss, "127.0.0.1:50021").(net.Listener)
 
 	for {
 		if Globalsig_ss == 0 {
 			// close all connection
 			Global_conn_list_lock.Lock()
 			for _, v := range Global_conn_list {
-				v.lock.Lock()
-				v.conn.Write([]byte("server close"))
-				_ = v.conn.Close()
-				v.lock.Unlock()
-				v.lock = nil
+				v.Lock.Lock()
+				v.Conn.Write([]byte("server close"))
+				_ = v.Conn.Close()
+				v.Lock.Unlock()
+				v.Lock = nil
 				v = nil
 				runtime.GC()
 			}
@@ -166,7 +143,7 @@ func control_process_tcp() {
 		if conn_lock.TryLock() {
 			conn_lock.Unlock()
 		}
-		safe_conn := safe_connection{conn: conn, lock: &conn_lock}
+		safe_conn := utils.Safe_connection{Conn: conn, Lock: &conn_lock}
 		Global_conn_list = append(Global_conn_list, &safe_conn)
 		//start goroutine processs
 		go process_tcp(safe_conn)

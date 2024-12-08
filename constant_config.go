@@ -1,21 +1,5 @@
 package main
 
-type ss_constant_config struct {
-	cache_path        string
-	img_path          string
-	dump_path         string
-	database_path     string
-	screenshot_second int
-}
-
-func (c *ss_constant_config) init_ss_constant_config() {
-	c.cache_path = "./cache"
-	c.img_path = "./img"
-	c.dump_path = "./dump"
-	c.database_path = "./example.db"
-	c.screenshot_second = 2
-}
-
 /*
 func decode_toml_file(path string, v any) (toml.MetaData, error) {
 	fp, err := os.Open(path)

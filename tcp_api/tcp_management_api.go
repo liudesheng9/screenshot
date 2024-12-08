@@ -2,12 +2,13 @@ package tcp_api
 
 import (
 	"os"
+	"screenshot_server/Global"
 	"screenshot_server/utils"
 	"strings"
 )
 
 func dump_clean() {
-	dump_root_path := Global_constant_config.Dump_path
+	dump_root_path := Global.Global_constant_config.Dump_path
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
 		return utils.Get_target_file_path_name(input, "txt")
@@ -15,15 +16,14 @@ func dump_clean() {
 	single_task_os_remove := func(args ...interface{}) error {
 		return os.Remove(args[0].(string))
 	}
-	get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global_sig_ss, dump_root_path).(utils.Get_target_file_path_name_return)
+	get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, dump_root_path).(utils.Get_target_file_path_name_return)
 	file_path_list := get_target_file_path_name_return.Files
 	for _, file_path := range file_path_list {
-		utils.Retry_single_task(single_task_os_remove, Global_sig_ss, file_path)
+		utils.Retry_single_task(single_task_os_remove, Global.Globalsig_ss, file_path)
 	}
 }
 
-func Execute_manager(safe_conn utils.Safe_connection, recv string, config utils.Ss_constant_config) {
-	init_ss_constant_config(config)
+func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 	recv_list := strings.Split(recv, " ")
 	if len(recv_list) == 1 {
 		safe_conn.Lock.Lock()

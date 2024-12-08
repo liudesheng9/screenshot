@@ -1,29 +1,17 @@
 package tcp_api
 
 import (
-	"database/sql"
 	"os"
+	"screenshot_server/Global"
 	"screenshot_server/utils"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-var Global_database_net *sql.DB
-var Global_constant_config utils.Ss_constant_config
-var Global_sig_ss int
-
-func init_ss_constant_config(config utils.Ss_constant_config) {
-	Global_constant_config = config
-}
-
-func init_database_net(database *sql.DB) {
-	Global_database_net = database
-}
-
 func query_database_count() (int, error) {
 	var count int
-	err := Global_database_net.QueryRow("SELECT count(*) FROM screenshots").Scan(&count)
+	err := Global.Global_database_net.QueryRow("SELECT count(*) FROM screenshots").Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -32,8 +20,8 @@ func query_database_count() (int, error) {
 
 func query_database_date_count(date string) (int, error) {
 	var count int
-	date_struct := utils.Decode_dateTimeStr(date, Global_sig_ss)
-	err := Global_database_net.QueryRow("SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=?", date_struct.Year, date_struct.Month, date_struct.Day).Scan(&count)
+	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
+	err := Global.Global_database_net.QueryRow("SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=?", date_struct.Year, date_struct.Month, date_struct.Day).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -45,8 +33,8 @@ func query_database_hour_count(hour string) (int, error) {
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
-	hour_int := utils.Retry_task(task_strconv_atoi, Global_sig_ss, hour).(int)
-	err := Global_database_net.QueryRow("SELECT count(*) FROM screenshots WHERE hour=?", strconv.Itoa(hour_int)).Scan(&count)
+	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
+	err := Global.Global_database_net.QueryRow("SELECT count(*) FROM screenshots WHERE hour=?", strconv.Itoa(hour_int)).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -59,7 +47,7 @@ func query_database_hour_count_all() map[string]int {
 	}
 	res := make(map[string]int)
 	for hour_int := 0; hour_int < 24; hour_int++ {
-		count := utils.Retry_task(task_query_database_hour_count, Global_sig_ss, strconv.Itoa(hour_int)).(int)
+		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, strconv.Itoa(hour_int)).(int)
 		res[strconv.Itoa(hour_int)] = count
 	}
 	return res
@@ -81,7 +69,7 @@ func query_database_date_count_all() (map[string]int, error) {
 		ORDER BY 
 			formatted_date;
 	`
-	rows, err := Global_database_net.Query(query)
+	rows, err := Global.Global_database_net.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +115,7 @@ func query_database_date_count_all() (map[string]int, error) {
 
 func query_min_date() (string, error) {
 	var date string
-	err := Global_database_net.QueryRow("SELECT MIN(YEAR || '-' || printf('%02d', MONTH) || '-' || printf('%02d', DAY)) AS min_date FROM screenshots").Scan(&date)
+	err := Global.Global_database_net.QueryRow("SELECT MIN(YEAR || '-' || printf('%02d', MONTH) || '-' || printf('%02d', DAY)) AS min_date FROM screenshots").Scan(&date)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +125,7 @@ func query_min_date() (string, error) {
 
 func query_max_date() (string, error) {
 	var date string
-	err := Global_database_net.QueryRow("SELECT MAX(YEAR || '-' || printf('%02d', MONTH) || '-' || printf('%02d', DAY)) AS max_date FROM screenshots").Scan(&date)
+	err := Global.Global_database_net.QueryRow("SELECT MAX(YEAR || '-' || printf('%02d', MONTH) || '-' || printf('%02d', DAY)) AS max_date FROM screenshots").Scan(&date)
 	if err != nil {
 		return "", err
 	}
@@ -149,7 +137,7 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
-	hour_int := utils.Retry_task(task_strconv_atoi, Global_sig_ss, hour).(int)
+	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
 	query := `
 		SELECT 
 			YEAR || '-' || printf('%02d', MONTH) || '-' || printf('%02d', DAY) AS formatted_date,
@@ -161,7 +149,7 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 		ORDER BY 
 			formatted_date;
 	`
-	rows, err := Global_database_net.Query(query, strconv.Itoa(hour_int))
+	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(hour_int))
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +193,7 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 }
 
 func query_database_date_hour_count_all(date string) (map[string]int, error) {
-	date_struct := utils.Decode_dateTimeStr(date, Global_sig_ss)
+	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
 	query := `
 		SELECT 
 			HOUR
@@ -214,7 +202,7 @@ func query_database_date_hour_count_all(date string) (map[string]int, error) {
 		WHERE 
 			YEAR = ? AND MONTH = ? AND DAY = ?
 	`
-	rows, err := Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day))
+	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day))
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +228,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		task_query_database_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_count()
 		}
-		count := utils.Retry_task(task_query_database_count, Global_sig_ss).(int)
+		count := utils.Retry_task(task_query_database_count, Global.Globalsig_ss).(int)
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("total data count: " + strconv.Itoa(count)))
 		safe_conn.Lock.Unlock()
@@ -256,7 +244,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		task_query_database_date_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count(args[0].(string))
 		}
-		count := utils.Retry_task(task_query_database_date_count, Global_sig_ss, recv_list[1]).(int)
+		count := utils.Retry_task(task_query_database_date_count, Global.Globalsig_ss, recv_list[1]).(int)
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("total data count: " + strconv.Itoa(count)))
 		safe_conn.Lock.Unlock()
@@ -266,7 +254,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		task_query_database_date_count_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count_all()
 		}
-		res := utils.Retry_task(task_query_database_date_count_all, Global_sig_ss).(map[string]int)
+		res := utils.Retry_task(task_query_database_date_count_all, Global.Globalsig_ss).(map[string]int)
 		write_str := ""
 		var keys []string
 		for k := range res {
@@ -291,7 +279,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_count(args[0].(string))
 		}
-		count := utils.Retry_task(task_query_database_hour_count, Global_sig_ss, recv_list[1]).(int)
+		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, recv_list[1]).(int)
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("total data count: " + strconv.Itoa(count)))
 		safe_conn.Lock.Unlock()
@@ -318,7 +306,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_hour_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_hour_count_all, Global_sig_ss, recv_list[3]).(map[string]int)
+		res := utils.Retry_task(task_query_database_date_hour_count_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
 		write_str := ""
 		for hour_int := 0; hour_int < 24; hour_int++ {
 			write_str += "\n" + "hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)])
@@ -341,7 +329,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		task_query_database_hour_date_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_date_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_hour_date_all, Global_sig_ss, recv_list[3]).(map[string]int)
+		res := utils.Retry_task(task_query_database_hour_date_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
 		write_str := ""
 		var keys []string
 		for k := range res {
@@ -349,7 +337,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 		}
 		var keys_int []int
 		for _, k := range keys {
-			keys_int = append(keys_int, utils.Retry_task(task_strconv_atoi, Global_sig_ss, k).(int))
+			keys_int = append(keys_int, utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, k).(int))
 		}
 		sort.Ints(keys_int)
 		for i, k := range keys_int {
@@ -374,7 +362,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			return query_database_count()
 		}
 
-		count := utils.Retry_task(task_query_database_count, Global_sig_ss).(int)
+		count := utils.Retry_task(task_query_database_count, Global.Globalsig_ss).(int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -382,8 +370,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
 
@@ -403,7 +391,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 		task_query_database_date_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count(args[0].(string))
 		}
-		count := utils.Retry_task(task_query_database_date_count, Global_sig_ss, recv_list[1]).(int)
+		count := utils.Retry_task(task_query_database_date_count, Global.Globalsig_ss, recv_list[1]).(int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -411,8 +399,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
 
@@ -426,7 +414,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 		task_query_database_date_count_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count_all()
 		}
-		res := utils.Retry_task(task_query_database_date_count_all, Global_sig_ss).(map[string]int)
+		res := utils.Retry_task(task_query_database_date_count_all, Global.Globalsig_ss).(map[string]int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -434,8 +422,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 
 			var keys []string
@@ -464,7 +452,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 		task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_count(args[0].(string))
 		}
-		count := utils.Retry_task(task_query_database_hour_count, Global_sig_ss, recv_list[1]).(int)
+		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, recv_list[1]).(int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -472,8 +460,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
 
@@ -493,8 +481,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 
 			for hour_int := 0; hour_int < 24; hour_int++ {
@@ -518,7 +506,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_hour_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_hour_count_all, Global_sig_ss, recv_list[3]).(map[string]int)
+		res := utils.Retry_task(task_query_database_date_hour_count_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -526,8 +514,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 
 			for hour_int := 0; hour_int < 24; hour_int++ {
@@ -554,7 +542,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 		task_query_database_hour_date_all := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_date_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_hour_date_all, Global_sig_ss, recv_list[3]).(map[string]int)
+		res := utils.Retry_task(task_query_database_hour_date_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -562,8 +550,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 				return file, err
 			}
 			currentTime := utils.GetDatetime()
-			file_name := Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
-			file := utils.Retry_task(task_os_create, Global_sig_ss, file_name).(*os.File)
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 
 			var keys []string
@@ -572,7 +560,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			}
 			var keys_int []int
 			for _, k := range keys {
-				keys_int = append(keys_int, utils.Retry_task(task_strconv_atoi, Global_sig_ss, k).(int))
+				keys_int = append(keys_int, utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, k).(int))
 			}
 			sort.Ints(keys_int)
 			for i, k := range keys_int {
@@ -604,8 +592,7 @@ func execute_sql_dump(safe_conn utils.Safe_connection, recv_list []string) {
 	safe_conn.Lock.Unlock()
 }
 
-func Execute_sql(safe_conn utils.Safe_connection, recv string, database *sql.DB) {
-	init_database_net(database)
+func Execute_sql(safe_conn utils.Safe_connection, recv string) {
 	recv_list := strings.Split(recv, " ")
 	if len(recv_list) == 1 { // important!
 		safe_conn.Lock.Lock()
@@ -625,7 +612,7 @@ func Execute_sql(safe_conn utils.Safe_connection, recv string, database *sql.DB)
 		task_query_min_date := func(args ...interface{}) (interface{}, error) {
 			return query_min_date()
 		}
-		date := utils.Retry_task(task_query_min_date, Global_sig_ss).(string)
+		date := utils.Retry_task(task_query_min_date, Global.Globalsig_ss).(string)
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("min date: " + date))
 		safe_conn.Lock.Unlock()
@@ -635,7 +622,7 @@ func Execute_sql(safe_conn utils.Safe_connection, recv string, database *sql.DB)
 		task_query_max_date := func(args ...interface{}) (interface{}, error) {
 			return query_max_date()
 		}
-		date := utils.Retry_task(task_query_max_date, Global_sig_ss).(string)
+		date := utils.Retry_task(task_query_max_date, Global.Globalsig_ss).(string)
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("max date: " + date))
 		safe_conn.Lock.Unlock()

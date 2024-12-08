@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"screenshot_server/Global"
 	"screenshot_server/tcp_api"
 	"screenshot_server/utils"
 	"strings"
@@ -19,27 +20,27 @@ func excute_recv_command(safe_conn utils.Safe_connection, recv string) {
 	// delete start space and end space
 	recv = strings.TrimSpace(recv)
 	if recv == "0" {
-		Global_sig_ss_Mutex.Lock()
-		Globalsig_ss = 0
-		Global_sig_ss_Mutex.Unlock()
+		Global.Global_sig_ss_Mutex.Lock()
+		*Global.Globalsig_ss = 0
+		Global.Global_sig_ss_Mutex.Unlock()
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("set stop"))
 		safe_conn.Lock.Unlock()
 		return
 	}
 	if recv == "1" {
-		Global_sig_ss_Mutex.Lock()
-		Globalsig_ss = 1
-		Global_sig_ss_Mutex.Unlock()
+		Global.Global_sig_ss_Mutex.Lock()
+		*Global.Globalsig_ss = 1
+		Global.Global_sig_ss_Mutex.Unlock()
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("set start"))
 		safe_conn.Lock.Unlock()
 		return
 	}
 	if recv == "2" {
-		Global_sig_ss_Mutex.Lock()
-		Globalsig_ss = 2
-		Global_sig_ss_Mutex.Unlock()
+		Global.Global_sig_ss_Mutex.Lock()
+		*Global.Globalsig_ss = 2
+		Global.Global_sig_ss_Mutex.Unlock()
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("set pause"))
 		safe_conn.Lock.Unlock()
@@ -53,12 +54,12 @@ func excute_recv_command(safe_conn utils.Safe_connection, recv string) {
 	}
 	if strings.Split(recv, " ")[0] == "man" {
 		// fmt.Println("man")
-		tcp_api.Execute_manager(safe_conn, recv, Global_constant_config)
+		tcp_api.Execute_manager(safe_conn, recv)
 		return
 	}
 	if strings.Split(recv, " ")[0] == "sql" {
 		// fmt.Println("sql")
-		tcp_api.Execute_sql(safe_conn, recv, Global_database_net)
+		tcp_api.Execute_sql(safe_conn, recv)
 		return
 	}
 	safe_conn.Lock.Lock()
@@ -112,10 +113,10 @@ func control_process_tcp() {
 		listen, err := net.Listen("tcp", args[0].(string))
 		return listen, err
 	}
-	listen := utils.Retry_task(task_net_listen, Globalsig_ss, "127.0.0.1:50021").(net.Listener)
+	listen := utils.Retry_task(task_net_listen, Global.Globalsig_ss, "127.0.0.1:50021").(net.Listener)
 
 	for {
-		if Globalsig_ss == 0 {
+		if *Global.Globalsig_ss == 0 {
 			// close all connection
 			Global_conn_list_lock.Lock()
 			for _, v := range Global_conn_list {

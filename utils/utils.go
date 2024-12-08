@@ -16,7 +16,7 @@ type Task func(args ...interface{}) (interface{}, error)
 type Single_Task func(args ...interface{}) error
 
 // retry method
-func Retry_task(task Task, sig_ss int, args ...interface{}) interface{} {
+func Retry_task(task Task, sig_ss *int, args ...interface{}) interface{} {
 	for {
 		result, err := task(args...)
 		if err == nil {
@@ -24,14 +24,14 @@ func Retry_task(task Task, sig_ss int, args ...interface{}) interface{} {
 		} else {
 			fmt.Printf("Error: %v\n", err)
 			time.Sleep(5 * time.Second)
-			if sig_ss == 0 {
+			if *sig_ss == 0 {
 				return result
 			}
 		}
 	}
 }
 
-func Retry_single_task(task Single_Task, sig_ss int, args ...interface{}) {
+func Retry_single_task(task Single_Task, sig_ss *int, args ...interface{}) {
 	for {
 		err := task(args...)
 		if err == nil {
@@ -39,7 +39,7 @@ func Retry_single_task(task Single_Task, sig_ss int, args ...interface{}) {
 		} else {
 			fmt.Printf("Error: %v\n", err)
 			time.Sleep(5 * time.Second)
-			if sig_ss == 0 {
+			if *sig_ss == 0 {
 				return
 			}
 		}
@@ -157,7 +157,7 @@ func GetDatetime() string {
 	return currentTimeStr
 }
 
-func Decode_dateTimeStr(dateTimeStr string, sig_ss int) Date {
+func Decode_dateTimeStr(dateTimeStr string, sig_ss *int) Date {
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
@@ -167,4 +167,9 @@ func Decode_dateTimeStr(dateTimeStr string, sig_ss int) Date {
 
 	return Date{year, month, day}
 
+}
+
+type Safe_file_lock struct {
+	Lock      *sync.Mutex
+	File_lock []string
 }

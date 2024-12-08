@@ -25,7 +25,13 @@ func dump_clean() {
 func Execute_manager(safe_conn utils.Safe_connection, recv string, config utils.Ss_constant_config) {
 	init_ss_constant_config(config)
 	recv_list := strings.Split(recv, " ")
-	if recv_list[1] == "dump" && recv_list[2] == "clean" && len(recv_list) == 3 {
+	if len(recv_list) == 1 {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid man command"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 3 && recv_list[1] == "dump" && recv_list[2] == "clean" {
 		dump_clean()
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("dump cleaned"))
@@ -35,5 +41,4 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string, config utils.
 	safe_conn.Lock.Lock()
 	safe_conn.Conn.Write([]byte("invalid man command"))
 	safe_conn.Lock.Unlock()
-
 }

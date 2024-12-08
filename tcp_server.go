@@ -52,10 +52,12 @@ func excute_recv_command(safe_conn utils.Safe_connection, recv string) {
 		return
 	}
 	if strings.Split(recv, " ")[0] == "man" {
+		// fmt.Println("man")
 		tcp_api.Execute_manager(safe_conn, recv, Global_constant_config)
 		return
 	}
 	if strings.Split(recv, " ")[0] == "sql" {
+		// fmt.Println("sql")
 		tcp_api.Execute_sql(safe_conn, recv, Global_database_net)
 		return
 	}

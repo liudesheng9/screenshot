@@ -607,6 +607,12 @@ func execute_sql_dump(safe_conn utils.Safe_connection, recv_list []string) {
 func Execute_sql(safe_conn utils.Safe_connection, recv string, database *sql.DB) {
 	init_database_net(database)
 	recv_list := strings.Split(recv, " ")
+	if len(recv_list) == 1 { // important!
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid sql command"))
+		safe_conn.Lock.Unlock()
+		return
+	}
 	if recv_list[1] == "count" {
 		execute_sql_count(safe_conn, recv_list[2:])
 		return

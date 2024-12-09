@@ -79,7 +79,9 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 		}
 		ahash, _ := image_manipulation.AverageHash(img)
 		fileName := fmt.Sprintf("%s_%d_%dx%d_%d.png", currentTime, i, bounds.Dx(), bounds.Dy(), ahash.Hash)
+		Global.Global_cache_path_instant_Mutex.Lock()
 		filePath := fmt.Sprintf(Global.Global_constant_config.Cache_path+"/%s", fileName)
+		Global.Global_cache_path_instant_Mutex.Unlock()
 		task_os_create := func(args ...interface{}) (interface{}, error) {
 			file, err := os.Create(args[0].(string))
 			return file, err
@@ -181,6 +183,7 @@ func thread_manage_library() {
 	}
 	for {
 		time.Sleep(5 * time.Second)
+		Global.Global_cache_path_Mutex.Lock()
 		file_num := utils.Retry_task(task_get_target_file_num, Global.Globalsig_ss, Global.Global_constant_config.Cache_path).(int)
 		if file_num > 50 {
 			cache_path := Global.Global_constant_config.Cache_path
@@ -200,6 +203,7 @@ func thread_manage_library() {
 				}
 			}
 		}
+		Global.Global_cache_path_Mutex.Unlock()
 		if *Global.Globalsig_ss == 0 {
 			break
 		}
@@ -287,6 +291,8 @@ func init_program() {
 	Global.Global_sig_ss_Mutex = new(sync.Mutex)
 
 	Global.Global_screenshot_gap_Mutex = new(sync.Mutex)
+	Global.Global_cache_path_Mutex = new(sync.Mutex)
+	Global.Global_cache_path_instant_Mutex = new(sync.Mutex)
 
 	Global.Global_database = library_manager.Init_database()
 	Global.Global_database_net = library_manager.Init_database()

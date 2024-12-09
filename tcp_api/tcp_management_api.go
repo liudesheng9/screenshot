@@ -1,6 +1,7 @@
 package tcp_api
 
 import (
+	"fmt"
 	"os"
 	"screenshot_server/Global"
 	"screenshot_server/init_config"
@@ -8,6 +9,7 @@ import (
 	"screenshot_server/utils"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func dump_clean() {
@@ -59,6 +61,57 @@ func execute_config_operation(safe_conn utils.Safe_connection, recv_list []strin
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("screen shot gap changed, new gap: " + strconv.Itoa(Global.Global_constant_config.Screenshot_second)))
 		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 2 && recv_list[0] == "cache_path" {
+		Old_cache_path := Global.Global_constant_config.Cache_path
+		err := os.MkdirAll(recv_list[1], os.ModePerm)
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("make path failed"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		Global.Global_cache_path_Mutex.Lock()
+		Global.Global_cache_path_instant_Mutex.Lock()
+		Global.Global_constant_config.Cache_path = recv_list[1]
+		Global.Global_cache_path_instant_Mutex.Unlock()
+		Global.Global_cache_path_Mutex.Unlock()
+
+		task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
+			input := args[0].(string)
+			return utils.Get_target_file_path_name(input, "png")
+		}
+		/*
+			task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
+				input := args[0].(string)
+				return utils.Get_target_file_num(input)
+			}
+		*/
+
+		Global.Global_cache_path_Mutex.Lock()
+		get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, Old_cache_path).(utils.Get_target_file_path_name_return)
+		file_path_list := get_target_file_path_name_return.Files
+		file_name_list := get_target_file_path_name_return.FileNames
+		for {
+			time.Sleep(5 * time.Second)
+			unlocked := library_manager.Check_if_locked(file_name_list)
+			fmt.Println("unlocked : ", unlocked)
+			if unlocked {
+				library_manager.Remove_lock(file_name_list)
+				library_manager.Insert_library(file_path_list)
+				break
+			} else {
+				continue
+			}
+
+		}
+		Global.Global_cache_path_Mutex.Unlock()
+
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("cache path changed, new path: " + Global.Global_constant_config.Cache_path))
+		safe_conn.Lock.Unlock()
+
 		return
 	}
 	if len(recv_list) == 1 && recv_list[0] == "dump_toml" {

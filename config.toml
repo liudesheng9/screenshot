@@ -2,4 +2,5 @@ Cache_path = "./cache"
 Img_path = "./img"
 Dump_path = "./dump"
 Database_path = "./example.db"
-Screenshot_second = 3
+Toml_path = "./config.toml"
+Screenshot_second = 2

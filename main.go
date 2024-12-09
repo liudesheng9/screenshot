@@ -104,8 +104,10 @@ func thread_screenshot() {
 		go func() {
 			screenshotExec(map_image)
 		}()
-		// time_duration := time.Duration(Global_constant_config.screenshot_second) * time.Second
-		time.Sleep(2 * time.Second)
+		Global.Global_screenshot_gap_Mutex.Lock()
+		time_duration := time.Duration(Global.Global_constant_config.Screenshot_second) * time.Second
+		Global.Global_screenshot_gap_Mutex.Unlock()
+		time.Sleep(time_duration)
 		if *Global.Globalsig_ss == 1 {
 			continue
 		}
@@ -256,7 +258,8 @@ func thread_tcp_communication() {
 func init_program() {
 	// autostartInit()
 	initLog()
-	Global.Global_constant_config = init_config.Init_ss_constant_config_from_toml()
+	Global.Global_constant_config = new(utils.Ss_constant_config)
+	*Global.Global_constant_config = init_config.Init_ss_constant_config_from_toml("./config.toml") // initial init config path
 	fmt.Println(Global.Global_constant_config)
 	// Global.Global_constant_config.Init_ss_constant_config()
 	// fmt.Println(Global.Global_constant_config.Screenshot_second)
@@ -283,8 +286,11 @@ func init_program() {
 	*Global.Globalsig_ss = 1
 	Global.Global_sig_ss_Mutex = new(sync.Mutex)
 
+	Global.Global_screenshot_gap_Mutex = new(sync.Mutex)
+
 	Global.Global_database = library_manager.Init_database()
 	Global.Global_database_net = library_manager.Init_database()
+
 }
 
 func close_program() {

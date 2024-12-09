@@ -3,8 +3,10 @@ package tcp_api
 import (
 	"os"
 	"screenshot_server/Global"
+	"screenshot_server/init_config"
 	"screenshot_server/library_manager"
 	"screenshot_server/utils"
+	"strconv"
 	"strings"
 )
 
@@ -22,6 +24,46 @@ func dump_clean() {
 	for _, file_path := range file_path_list {
 		utils.Retry_single_task(single_task_os_remove, Global.Globalsig_ss, file_path)
 	}
+}
+
+func execute_config_operation(safe_conn utils.Safe_connection, recv_list []string) {
+	if len(recv_list) == 0 {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid config command"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 2 && recv_list[0] == "load" {
+		// TODO: dynamic logic
+		New_constant_config := init_config.Init_ss_constant_config_from_toml(recv_list[1])
+		Old_constant_config := *Global.Global_constant_config
+		if Old_constant_config.Screenshot_second != New_constant_config.Screenshot_second {
+			Global.Global_constant_config.Screenshot_second = New_constant_config.Screenshot_second
+		}
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("config loaded"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 2 && recv_list[0] == "screenshot_gap" {
+		New_gap_second, err := strconv.Atoi(recv_list[1])
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("invalid screenshot_gap value"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		Global.Global_screenshot_gap_Mutex.Lock()
+		Global.Global_constant_config.Screenshot_second = New_gap_second
+		Global.Global_screenshot_gap_Mutex.Unlock()
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("screen shot gap changed, new gap: " + strconv.Itoa(Global.Global_constant_config.Screenshot_second)))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	safe_conn.Lock.Lock()
+	safe_conn.Conn.Write([]byte("invalid config command"))
+	safe_conn.Lock.Unlock()
 }
 
 func Execute_manager(safe_conn utils.Safe_connection, recv string) {
@@ -51,6 +93,10 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("Database tidied"))
 		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) > 1 && recv_list[1] == "config" {
+		execute_config_operation(safe_conn, recv_list[2:])
 		return
 	}
 	safe_conn.Lock.Lock()

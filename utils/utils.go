@@ -126,6 +126,7 @@ type Ss_constant_config struct {
 	Img_path          string
 	Dump_path         string
 	Database_path     string
+	Toml_path         string
 	Screenshot_second int
 }
 
@@ -134,6 +135,7 @@ func (c *Ss_constant_config) Init_ss_constant_config() {
 	c.Img_path = "./img"
 	c.Dump_path = "./dump"
 	c.Database_path = "./example.db"
+	c.Toml_path = "./config.toml"
 	c.Screenshot_second = 2
 }
 

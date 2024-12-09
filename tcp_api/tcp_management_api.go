@@ -61,6 +61,19 @@ func execute_config_operation(safe_conn utils.Safe_connection, recv_list []strin
 		safe_conn.Lock.Unlock()
 		return
 	}
+	if len(recv_list) == 1 && recv_list[0] == "dump_toml" {
+		err := init_config.Encode_ss_constant_config_to_toml(*Global.Global_constant_config, "./config.toml")
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("dump toml failed"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("dump toml success"))
+		safe_conn.Lock.Unlock()
+		return
+	}
 	safe_conn.Lock.Lock()
 	safe_conn.Conn.Write([]byte("invalid config command"))
 	safe_conn.Lock.Unlock()

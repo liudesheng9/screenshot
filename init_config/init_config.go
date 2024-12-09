@@ -29,15 +29,17 @@ func Init_ss_constant_config_from_toml(toml_path string) utils.Ss_constant_confi
 	return c
 }
 
-func Encode_ss_constant_config_to_toml(c utils.Ss_constant_config, toml_path string) {
+func Encode_ss_constant_config_to_toml(c utils.Ss_constant_config, toml_path string) error {
 	fp, err := os.OpenFile(toml_path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		fmt.Println("Create toml failed: ", err)
-		return
+		return err
 	}
 	defer fp.Close()
 	err = toml.NewEncoder(fp).Encode(c)
 	if err != nil {
 		fmt.Println("Encode toml failed: ", err)
+		return err
 	}
+	return nil
 }

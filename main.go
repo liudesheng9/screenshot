@@ -175,7 +175,7 @@ func thread_screenshot() {
 func thread_manage_library() {
 	task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)
-		return utils.Get_target_file_num(input)
+		return utils.Get_target_file_num(input, "png")
 	}
 	task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
 		input := args[0].(string)

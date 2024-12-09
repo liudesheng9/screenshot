@@ -9,6 +9,7 @@ import (
 	"screenshot_server/utils"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,54 +65,126 @@ func execute_config_operation(safe_conn utils.Safe_connection, recv_list []strin
 		return
 	}
 	if len(recv_list) == 2 && recv_list[0] == "cache_path" {
-		Old_cache_path := Global.Global_constant_config.Cache_path
+		//input check
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("checking input..."))
+		safe_conn.Lock.Unlock()
+		if recv_list[1][:2] != "./" {
+			recv_list[1] = "./" + recv_list[1]
+		}
 		err := os.MkdirAll(recv_list[1], os.ModePerm)
 		if err != nil {
+			fmt.Println("make path failed: ", err)
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("make path failed"))
 			safe_conn.Lock.Unlock()
 			return
 		}
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("make path success"))
+		safe_conn.Lock.Unlock()
+
+		Old_cache_path := Global.Global_constant_config.Cache_path
+		if Old_cache_path == recv_list[1] {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("cache path not changed"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+
 		Global.Global_cache_path_Mutex.Lock()
 		Global.Global_cache_path_instant_Mutex.Lock()
 		Global.Global_constant_config.Cache_path = recv_list[1]
 		Global.Global_cache_path_instant_Mutex.Unlock()
 		Global.Global_cache_path_Mutex.Unlock()
 
-		task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
-			input := args[0].(string)
-			return utils.Get_target_file_path_name(input, "png")
-		}
-		/*
-			task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
-				input := args[0].(string)
-				return utils.Get_target_file_num(input)
-			}
-		*/
-
-		Global.Global_cache_path_Mutex.Lock()
-		get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, Old_cache_path).(utils.Get_target_file_path_name_return)
-		file_path_list := get_target_file_path_name_return.Files
-		file_name_list := get_target_file_path_name_return.FileNames
-		for {
-			time.Sleep(5 * time.Second)
-			unlocked := library_manager.Check_if_locked(file_name_list)
-			fmt.Println("unlocked : ", unlocked)
-			if unlocked {
-				library_manager.Remove_lock(file_name_list)
-				library_manager.Insert_library(file_path_list)
-				break
-			} else {
-				continue
-			}
-
-		}
-		Global.Global_cache_path_Mutex.Unlock()
-
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("cache path changed, new path: " + Global.Global_constant_config.Cache_path))
 		safe_conn.Lock.Unlock()
 
+		task_get_target_file_path_name := func(args ...interface{}) (interface{}, error) {
+			input := args[0].(string)
+			return utils.Get_target_file_path_name(input, "png")
+		}
+		task_get_target_file_num := func(args ...interface{}) (interface{}, error) {
+			input := args[0].(string)
+			return utils.Get_target_file_num(input, "png")
+		}
+		wg := sync.WaitGroup{}
+		wg.Add(2)
+
+		// remove imgs
+		go func() {
+			defer wg.Done()
+			Global.Global_cache_path_Mutex.Lock()
+			get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, Old_cache_path).(utils.Get_target_file_path_name_return)
+			file_path_list := get_target_file_path_name_return.Files
+			file_name_list := get_target_file_path_name_return.FileNames
+			for {
+				time.Sleep(5 * time.Second)
+				unlocked := library_manager.Check_if_locked(file_name_list)
+				fmt.Println("unlocked : ", unlocked)
+				if unlocked {
+					library_manager.Remove_lock(file_name_list)
+					library_manager.Insert_library(file_path_list)
+					break
+				} else {
+					continue
+				}
+
+			}
+			Global.Global_cache_path_Mutex.Unlock()
+
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("move imgs done"))
+			safe_conn.Lock.Unlock()
+		}()
+
+		// dump toml
+		go func() {
+			defer wg.Done()
+			err = init_config.Encode_ss_constant_config_to_toml(*Global.Global_constant_config, "./config.toml")
+			if err != nil {
+				safe_conn.Lock.Lock()
+				safe_conn.Conn.Write([]byte("dump toml failed"))
+				safe_conn.Lock.Unlock()
+				return
+			}
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("dump toml success"))
+			safe_conn.Lock.Unlock()
+		}()
+
+		wg.Wait()
+
+		//remove old cache path
+		go func() {
+
+			for i := 0; i < 5; i++ {
+				file_num := utils.Retry_task(task_get_target_file_num, Global.Globalsig_ss, Old_cache_path).(int)
+				if file_num == 0 {
+					err := os.RemoveAll(Old_cache_path)
+					if err != nil {
+						safe_conn.Lock.Lock()
+						safe_conn.Conn.Write([]byte("remove old cache path failed, please remove it manually"))
+						safe_conn.Conn.Write([]byte("error: " + err.Error()))
+						safe_conn.Lock.Unlock()
+						return
+					}
+					safe_conn.Lock.Lock()
+					safe_conn.Conn.Write([]byte("remove old cache path success"))
+					safe_conn.Lock.Unlock()
+					return
+				} else {
+					time.Sleep(3 * time.Second)
+					// fmt.Println("file num: ", file_num)
+					continue
+				}
+			}
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("remove old cache path failed, please remove it manually"))
+			safe_conn.Lock.Unlock()
+		}()
 		return
 	}
 	if len(recv_list) == 1 && recv_list[0] == "dump_toml" {

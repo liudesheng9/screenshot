@@ -108,9 +108,12 @@ func Get_target_file_name(root string, suffix string) ([]string, error) {
 	return files, nil
 }
 
-func Get_target_file_num(root string) (int, error) {
+func Get_target_file_num(root string, suffix string) (int, error) {
 	var i int
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if !strings.HasSuffix(path, "."+suffix) {
+			return nil
+		}
 		i++
 		return nil
 	})

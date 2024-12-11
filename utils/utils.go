@@ -178,3 +178,21 @@ type Safe_file_lock struct {
 	Lock      *sync.Mutex
 	File_lock []string
 }
+
+func In_string_list(query string, list []string) bool {
+	for _, item := range list {
+		if query == item {
+			return true
+		}
+	}
+	return false
+}
+
+func In_string_list_index(query string, list []string) int {
+	for index, item := range list {
+		if query == item {
+			return index
+		}
+	}
+	return -1
+}

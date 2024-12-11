@@ -1,6 +1,7 @@
 package tcp_api
 
 import (
+	"fmt"
 	"os"
 	"screenshot_server/Global"
 	"screenshot_server/utils"
@@ -223,6 +224,94 @@ func query_database_date_hour_count_all(date string) (map[string]int, error) {
 	return res, nil
 }
 
+func query_database_date_filename(date string) ([]string, error) {
+	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
+	query := `
+		SELECT 
+			FILE_NAME
+		FROM 
+			screenshots
+		WHERE 
+			YEAR = ? AND MONTH = ? AND DAY = ?
+	`
+	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := make([]string, 0)
+	for rows.Next() {
+		var filename string
+		err = rows.Scan(&filename)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, filename)
+	}
+	return res, nil
+}
+
+func query_database_hour_filename(hour string) ([]string, error) {
+	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
+		return strconv.Atoi(args[0].(string))
+	}
+	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
+	query := `
+		SELECT 
+			FILE_NAME
+		FROM 
+			screenshots
+		WHERE 
+			HOUR = ?
+	`
+	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(hour_int))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := make([]string, 0)
+	for rows.Next() {
+		var filename string
+		err = rows.Scan(&filename)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, filename)
+	}
+	return res, nil
+}
+
+func query_database_date_hour_filename(date string, hour string) ([]string, error) {
+	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
+		return strconv.Atoi(args[0].(string))
+	}
+	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
+	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
+	query := `
+		SELECT 
+			FILE_NAME
+		FROM 
+			screenshots
+		WHERE 
+			YEAR = ? AND MONTH = ? AND DAY = ? AND HOUR = ?
+	`
+	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day), strconv.Itoa(hour_int))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := make([]string, 0)
+	for rows.Next() {
+		var filename string
+		err = rows.Scan(&filename)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, filename)
+	}
+	return res, nil
+}
+
 func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 	if len(recv_list) == 0 {
 		task_query_database_count := func(args ...interface{}) (interface{}, error) {
@@ -384,7 +473,7 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 	safe_conn.Lock.Unlock()
 }
 
-func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string) {
+func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string, recv string) {
 	if len(recv_list) == 0 {
 		task_query_database_count := func(args ...interface{}) (interface{}, error) {
 			return query_database_count()
@@ -401,6 +490,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
 			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
+			file.Write([]byte("command executed: " + recv + "\n"))
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
 
 			safe_conn.Lock.Lock()
@@ -437,6 +527,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
 			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
+			file.Write([]byte("command executed: " + recv + "\n"))
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
 
 			safe_conn.Lock.Lock()
@@ -505,6 +596,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
 			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
+			file.Write([]byte("command executed: " + recv + "\n"))
 			file.Write([]byte("total data count: " + strconv.Itoa(count)))
 
 			safe_conn.Lock.Lock()
@@ -527,6 +619,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 
+			file.Write([]byte("command executed: " + recv + "\n"))
 			for hour_int := 0; hour_int < 24; hour_int++ {
 				file.Write([]byte("hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)]) + "\n"))
 			}
@@ -567,6 +660,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
 			defer file.Close()
 
+			file.Write([]byte("command executed: " + recv + "\n"))
 			for hour_int := 0; hour_int < 24; hour_int++ {
 				file.Write([]byte("hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)]) + "\n"))
 			}
@@ -622,6 +716,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 			for i, k := range keys_int {
 				keys[i] = strconv.Itoa(k)
 			}
+			file.Write([]byte("command executed: " + recv + "\n"))
 			for _, date := range keys {
 				file.Write([]byte("date " + date + ": " + strconv.Itoa(res[date]) + "\n"))
 			}
@@ -634,13 +729,178 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string)
 		return
 	}
 	safe_conn.Lock.Lock()
-	safe_conn.Conn.Write([]byte("invalid sql dump count command"))
+	safe_conn.Conn.Write([]byte("Invalid sql dump count command"))
 	safe_conn.Lock.Unlock()
 }
 
-func execute_sql_dump(safe_conn utils.Safe_connection, recv_list []string) {
+func execute_sql_dump_filename(safe_conn utils.Safe_connection, recv_list []string, recv string) {
+	if len(recv_list) == 0 {
+		safe_conn.Lock.Lock()
+		// safe_conn.Conn.Write([]byte("Target results dumped."))
+		safe_conn.Conn.Write([]byte("Invalid sql dump filename command"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 2 && utils.In_string_list("hour", recv_list) && !utils.In_string_list("date", recv_list) {
+		if len(recv_list[1]) > 2 {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid hour format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		_, err := strconv.Atoi(recv_list[1])
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid hour format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+
+		task_query_database_hour_filename := func(args ...interface{}) (interface{}, error) {
+			return query_database_hour_filename(args[0].(string))
+		}
+		res := utils.Retry_task(task_query_database_hour_filename, Global.Globalsig_ss, recv_list[1]).([]string)
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := utils.GetDatetime()
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
+			defer file.Close()
+			file.Write([]byte("command executed: " + recv + "\n"))
+			sort.Strings(res)
+			for _, filename := range res {
+				file.Write([]byte(filename + "\n"))
+			}
+
+			safe_conn.Lock.Lock()
+			// safe_conn.Conn.Write([]byte("Target results dumped."))
+			safe_conn.Conn.Write([]byte("Target results dumped."))
+			safe_conn.Lock.Unlock()
+		}()
+		return
+	}
+	if len(recv_list) == 2 && !utils.In_string_list("hour", recv_list) && utils.In_string_list("date", recv_list) {
+		if len(recv_list[1]) != 8 {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid hour format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		_, err := strconv.Atoi(recv_list[1])
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid date format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+
+		task_query_database_date_filename := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_filename(args[0].(string))
+		}
+		res := utils.Retry_task(task_query_database_date_filename, Global.Globalsig_ss, recv_list[1]).([]string)
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := utils.GetDatetime()
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
+			defer file.Close()
+			file.Write([]byte("command executed: " + recv + "\n"))
+			sort.Strings(res)
+			for _, filename := range res {
+				file.Write([]byte(filename + "\n"))
+			}
+
+			safe_conn.Lock.Lock()
+			// safe_conn.Conn.Write([]byte("Target results dumped."))
+			safe_conn.Conn.Write([]byte("Target results dumped."))
+			safe_conn.Lock.Unlock()
+		}()
+		return
+	}
+	if len(recv_list) == 4 && utils.In_string_list("hour", recv_list) && utils.In_string_list("date", recv_list) {
+		index_hour := utils.In_string_list_index("hour", recv_list)
+		index_date := utils.In_string_list_index("date", recv_list)
+		fmt.Println(index_hour, index_date)
+		if !((index_hour == 0 && index_date == 2) || (index_hour == 2 && index_date == 0)) {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid sql dump filename command"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		if len(recv_list[index_hour+1]) > 2 {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid hour format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		_, err := strconv.Atoi(recv_list[index_hour+1])
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid hour format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		if len(recv_list[index_date+1]) != 8 {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid date format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		_, err = strconv.Atoi(recv_list[index_date+1])
+		if err != nil {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("Invalid date format"))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		hour_string := recv_list[index_hour+1]
+		date_string := recv_list[index_date+1]
+
+		task_query_database_date_hour_filename := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_hour_filename(args[0].(string), args[1].(string))
+		}
+		res := utils.Retry_task(task_query_database_date_hour_filename, Global.Globalsig_ss, date_string, hour_string).([]string)
+		go func() {
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			currentTime := utils.GetDatetime()
+			file_name := Global.Global_constant_config.Dump_path + "/" + currentTime + "_dump.txt"
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, file_name).(*os.File)
+			defer file.Close()
+			file.Write([]byte("command executed: " + recv + "\n"))
+			sort.Strings(res)
+			for _, filename := range res {
+				file.Write([]byte(filename + "\n"))
+			}
+
+			safe_conn.Lock.Lock()
+			// safe_conn.Conn.Write([]byte("Target results dumped."))
+			safe_conn.Conn.Write([]byte("Target results dumped."))
+			safe_conn.Lock.Unlock()
+		}()
+		return
+	}
+	safe_conn.Lock.Lock()
+	safe_conn.Conn.Write([]byte("Invalid sql dump filename command"))
+	safe_conn.Lock.Unlock()
+
+}
+
+func execute_sql_dump(safe_conn utils.Safe_connection, recv_list []string, recv string) {
 	if recv_list[0] == "count" {
-		execute_sql_dump_count(safe_conn, recv_list[1:])
+		execute_sql_dump_count(safe_conn, recv_list[1:], recv)
+		return
+	}
+	if recv_list[0] == "filename" {
+		execute_sql_dump_filename(safe_conn, recv_list[1:], recv)
 		return
 	}
 	safe_conn.Lock.Lock()
@@ -661,7 +921,7 @@ func Execute_sql(safe_conn utils.Safe_connection, recv string) {
 		return
 	}
 	if recv_list[1] == "dump" {
-		execute_sql_dump(safe_conn, recv_list[2:])
+		execute_sql_dump(safe_conn, recv_list[2:], recv)
 		return
 	}
 	if recv_list[1] == "min_date" {

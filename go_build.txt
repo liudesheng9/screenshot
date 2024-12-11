@@ -1,1 +1,1 @@
-go build -ldflags -H=windowsgui -o ss.exe
+go build -ldflags="-s -w -H=windowsgui" -o ss.exe

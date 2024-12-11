@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"image"
 	"log"
 	"net"
 	"os"
@@ -195,4 +196,9 @@ func In_string_list_index(query string, list []string) int {
 		}
 	}
 	return -1
+}
+
+type Image_thread_id struct {
+	Img *image.RGBA
+	Id  int64
 }

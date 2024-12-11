@@ -2,6 +2,7 @@ package Global
 
 import (
 	"database/sql"
+	"image"
 	"os"
 	"screenshot_server/utils"
 	"sync"
@@ -21,3 +22,6 @@ var Global_database_net *sql.DB
 var Global_logFile *os.File
 
 var Global_safe_file_lock *utils.Safe_file_lock
+
+var Global_map_image map[int]*image.RGBA
+var Global_map_image_Mutex *sync.Mutex

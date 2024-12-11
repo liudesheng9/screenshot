@@ -53,7 +53,7 @@ func initControlFile() {
 	defer file.Close()
 }
 
-func screenshotExec(map_image map[int]*image.RGBA) {
+func screenshotExec() {
 	n := screenshot.NumActiveDisplays()
 	currentTime := utils.GetDatetime()
 	for i := 0; i < n; i++ {
@@ -64,18 +64,25 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 			fmt.Printf("CaptureRect failed: %v\n", err)
 			continue
 		}
-
-		img_brfore := map_image[i]
-		if img_brfore != nil {
-			distance := image_manipulation.Img_distance(img_brfore, img)
+		Global.Global_map_image_Mutex.Lock()
+		img_before := Global.Global_map_image[i]
+		Global.Global_map_image_Mutex.Unlock()
+		if img_before != nil {
+			distance := image_manipulation.Img_distance(img_before, img)
 			if distance < 3 {
-				map_image[i] = img
+				Global.Global_map_image_Mutex.Lock()
+				Global.Global_map_image[i] = img
+				Global.Global_map_image_Mutex.Unlock()
 				continue
 			} else {
-				map_image[i] = img
+				Global.Global_map_image_Mutex.Lock()
+				Global.Global_map_image[i] = img
+				Global.Global_map_image_Mutex.Unlock()
 			}
 		} else {
-			map_image[i] = img
+			Global.Global_map_image_Mutex.Lock()
+			Global.Global_map_image[i] = img
+			Global.Global_map_image_Mutex.Unlock()
 		}
 		ahash, _ := image_manipulation.AverageHash(img)
 		fileName := fmt.Sprintf("%s_%d_%dx%d_%d.png", currentTime, i, bounds.Dx(), bounds.Dy(), ahash.Hash)
@@ -101,10 +108,9 @@ func screenshotExec(map_image map[int]*image.RGBA) {
 }
 
 func thread_screenshot() {
-	map_image := make(map[int]*image.RGBA)
 	for {
 		go func() {
-			screenshotExec(map_image)
+			screenshotExec()
 		}()
 		Global.Global_screenshot_gap_Mutex.Lock()
 		time_duration := time.Duration(Global.Global_constant_config.Screenshot_second) * time.Second
@@ -296,6 +302,9 @@ func init_program() {
 
 	Global.Global_database = library_manager.Init_database()
 	Global.Global_database_net = library_manager.Init_database()
+
+	Global.Global_map_image = make(map[int]*image.RGBA)
+	Global.Global_map_image_Mutex = new(sync.Mutex)
 
 }
 

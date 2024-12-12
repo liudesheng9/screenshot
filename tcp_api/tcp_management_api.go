@@ -200,6 +200,7 @@ func execute_config_operation(safe_conn utils.Safe_connection, recv_list []strin
 		safe_conn.Lock.Unlock()
 		return
 	}
+
 	safe_conn.Lock.Lock()
 	safe_conn.Conn.Write([]byte("invalid config command"))
 	safe_conn.Lock.Unlock()
@@ -233,6 +234,23 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 		safe_conn.Conn.Write([]byte("Database tidied"))
 		safe_conn.Lock.Unlock()
 		return
+	}
+	if len(recv_list) == 2 && recv_list[1] == "status" {
+		Global.Global_screenshot_status_Mutex.Lock()
+		screenshot_status := Global.Global_screenshot_status
+		Global.Global_screenshot_status_Mutex.Unlock()
+		if screenshot_status <= 0 {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("screenshot state: off"))
+			safe_conn.Lock.Unlock()
+			return
+		} else {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("screenshot state: running"))
+			safe_conn.Conn.Write([]byte("running thread num: " + strconv.Itoa(screenshot_status)))
+			safe_conn.Lock.Unlock()
+			return
+		}
 	}
 	if len(recv_list) > 1 && recv_list[1] == "config" {
 		execute_config_operation(safe_conn, recv_list[2:])

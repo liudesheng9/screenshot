@@ -110,7 +110,15 @@ func screenshotExec() {
 func thread_screenshot() {
 	for {
 		go func() {
+			Global.Global_screenshot_status_Mutex.Lock()
+			Global.Global_screenshot_status += 1
+			Global.Global_screenshot_status_Mutex.Unlock()
 			screenshotExec()
+			time_overlap := time.Duration(Global.Global_constant_config.Screenshot_second+1) * time.Second
+			time.Sleep(time_overlap)
+			Global.Global_screenshot_status_Mutex.Lock()
+			Global.Global_screenshot_status -= 1
+			Global.Global_screenshot_status_Mutex.Unlock()
 		}()
 		Global.Global_screenshot_gap_Mutex.Lock()
 		time_duration := time.Duration(Global.Global_constant_config.Screenshot_second) * time.Second
@@ -305,6 +313,9 @@ func init_program() {
 
 	Global.Global_map_image = make(map[int]*image.RGBA)
 	Global.Global_map_image_Mutex = new(sync.Mutex)
+
+	Global.Global_screenshot_status = 0
+	Global.Global_screenshot_status_Mutex = new(sync.Mutex)
 
 }
 

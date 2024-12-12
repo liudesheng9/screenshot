@@ -25,3 +25,7 @@ var Global_safe_file_lock *utils.Safe_file_lock
 
 var Global_map_image map[int]*image.RGBA
 var Global_map_image_Mutex *sync.Mutex
+
+// state identitier
+var Global_screenshot_status int
+var Global_screenshot_status_Mutex *sync.Mutex

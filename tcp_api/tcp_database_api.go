@@ -895,6 +895,12 @@ func execute_sql_dump_filename(safe_conn utils.Safe_connection, recv_list []stri
 }
 
 func execute_sql_dump(safe_conn utils.Safe_connection, recv_list []string, recv string) {
+	if len(recv_list) == 0 {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid sql dump command"))
+		safe_conn.Lock.Unlock()
+		return
+	}
 	if recv_list[0] == "count" {
 		execute_sql_dump_count(safe_conn, recv_list[1:], recv)
 		return

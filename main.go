@@ -53,67 +53,96 @@ func initControlFile() {
 	defer file.Close()
 }
 
-func screenshotExec() {
+func screenshotExec(thread_id int64) {
 	n := screenshot.NumActiveDisplays()
 	currentTime := utils.GetDatetime()
+	wg := new(sync.WaitGroup)
+	wg.Add(n)
 	for i := 0; i < n; i++ {
-		bounds := screenshot.GetDisplayBounds(i)
-
-		img, err := screenshot.CaptureRect(bounds)
-		if err != nil {
-			fmt.Printf("CaptureRect failed: %v\n", err)
-			continue
+		if Global.Global_map_image[i] == nil {
+			Global.Global_map_image[i] = make(map[int64]*image.RGBA)
 		}
-		Global.Global_map_image_Mutex.Lock()
-		img_before := Global.Global_map_image[i]
-		Global.Global_map_image_Mutex.Unlock()
-		if img_before != nil {
-			distance := image_manipulation.Img_distance(img_before, img)
-			if distance < 3 {
-				Global.Global_map_image_Mutex.Lock()
-				Global.Global_map_image[i] = img
-				Global.Global_map_image_Mutex.Unlock()
-				continue
-			} else {
-				Global.Global_map_image_Mutex.Lock()
-				Global.Global_map_image[i] = img
-				Global.Global_map_image_Mutex.Unlock()
-			}
-		} else {
-			Global.Global_map_image_Mutex.Lock()
-			Global.Global_map_image[i] = img
-			Global.Global_map_image_Mutex.Unlock()
-		}
-		ahash, _ := image_manipulation.AverageHash(img)
-		fileName := fmt.Sprintf("%s_%d_%dx%d_%d.png", currentTime, i, bounds.Dx(), bounds.Dy(), ahash.Hash)
-		Global.Global_cache_path_instant_Mutex.Lock()
-		filePath := fmt.Sprintf(Global.Global_constant_config.Cache_path+"/%s", fileName)
-		Global.Global_cache_path_instant_Mutex.Unlock()
-		task_os_create := func(args ...interface{}) (interface{}, error) {
-			file, err := os.Create(args[0].(string))
-			return file, err
-		}
-		file := utils.Retry_task(task_os_create, Global.Globalsig_ss, filePath).(*os.File)
-		defer file.Close()
-		png.Encode(file, img)
-
 		go func() {
-			image_manipulation.Wirte_Meta_to_file(filePath, fileName, img)
-			Global.Global_safe_file_lock.Lock.Lock()
-			Global.Global_safe_file_lock.File_lock = append(Global.Global_safe_file_lock.File_lock, fileName)
-			Global.Global_safe_file_lock.Lock.Unlock()
+			defer wg.Done()
+			bounds := screenshot.GetDisplayBounds(i)
+
+			img, err := screenshot.CaptureRect(bounds)
+			if err != nil {
+				fmt.Printf("CaptureRect failed: %v\n", err)
+				return
+			}
+
+			// update img now
+			Global.Global_map_image_Mutex.Lock()
+			Global.Global_map_image[i][thread_id] = img
+			Global.Global_map_image_Mutex.Unlock()
+			if thread_id > 1 {
+				loop_num := 0
+				for {
+					time.Sleep(500 * time.Millisecond)
+					// Global.Global_map_image_Mutex.Lock()
+					if Global.Global_map_image[i][thread_id-1] == nil {
+						loop_num += 1
+						if loop_num <= 2*Global.Global_constant_config.Screenshot_second {
+							continue
+						} else {
+							goto save_screenshot
+						}
+					}
+					if Global.Global_map_image[i][thread_id-1] != nil {
+						break
+					}
+					// Global.Global_map_image_Mutex.Unlock()
+				}
+				img_before := Global.Global_map_image[i][thread_id-1]
+				distance := image_manipulation.Img_distance(img_before, img)
+				if distance < 3 {
+					Global.Global_map_image_Mutex.Lock()
+					delete(Global.Global_map_image[i], thread_id-1)
+					Global.Global_map_image_Mutex.Unlock()
+					return
+				} else {
+					Global.Global_map_image_Mutex.Lock()
+					delete(Global.Global_map_image[i], thread_id-1)
+					Global.Global_map_image_Mutex.Unlock()
+				}
+
+			}
+		save_screenshot:
+			ahash, _ := image_manipulation.AverageHash(img)
+			fileName := fmt.Sprintf("%s_%d_%dx%d_%d.png", currentTime, i, bounds.Dx(), bounds.Dy(), ahash.Hash)
+			Global.Global_cache_path_instant_Mutex.Lock()
+			filePath := fmt.Sprintf(Global.Global_constant_config.Cache_path+"/%s", fileName)
+			Global.Global_cache_path_instant_Mutex.Unlock()
+			task_os_create := func(args ...interface{}) (interface{}, error) {
+				file, err := os.Create(args[0].(string))
+				return file, err
+			}
+			file := utils.Retry_task(task_os_create, Global.Globalsig_ss, filePath).(*os.File)
+			defer file.Close()
+			png.Encode(file, img)
+
+			go func() {
+				image_manipulation.Wirte_Meta_to_file(filePath, fileName, img)
+				Global.Global_safe_file_lock.Lock.Lock()
+				Global.Global_safe_file_lock.File_lock = append(Global.Global_safe_file_lock.File_lock, fileName)
+				Global.Global_safe_file_lock.Lock.Unlock()
+			}()
+			fmt.Printf("#%d : %v \"%s\"\n", i, bounds, fileName)
 		}()
-		fmt.Printf("#%d : %v \"%s\"\n", i, bounds, fileName)
 	}
+	wg.Wait()
 }
 
 func thread_screenshot() {
+	var thread_id int64 = 0
 	for {
+		thread_id += 1
 		go func() {
 			Global.Global_screenshot_status_Mutex.Lock()
 			Global.Global_screenshot_status += 1
 			Global.Global_screenshot_status_Mutex.Unlock()
-			screenshotExec()
+			screenshotExec(thread_id)
 			time_overlap := time.Duration(Global.Global_constant_config.Screenshot_second+1) * time.Second
 			time.Sleep(time_overlap)
 			Global.Global_screenshot_status_Mutex.Lock()
@@ -311,7 +340,7 @@ func init_program() {
 	Global.Global_database = library_manager.Init_database()
 	Global.Global_database_net = library_manager.Init_database()
 
-	Global.Global_map_image = make(map[int]*image.RGBA)
+	Global.Global_map_image = make(map[int]map[int64]*image.RGBA)
 	Global.Global_map_image_Mutex = new(sync.Mutex)
 
 	Global.Global_screenshot_status = 0

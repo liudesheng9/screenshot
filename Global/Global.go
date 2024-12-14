@@ -23,7 +23,7 @@ var Global_logFile *os.File
 
 var Global_safe_file_lock *utils.Safe_file_lock
 
-var Global_map_image map[int]*image.RGBA
+var Global_map_image map[int]map[int64]*image.RGBA
 var Global_map_image_Mutex *sync.Mutex
 
 // state identitier

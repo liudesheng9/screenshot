@@ -245,9 +245,10 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 			safe_conn.Lock.Unlock()
 			return
 		} else {
+			write := "\nscreenshot state: running"
+			write += "\nrunning thread num: " + strconv.Itoa(screenshot_status)
 			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("screenshot state: running"))
-			safe_conn.Conn.Write([]byte("running thread num: " + strconv.Itoa(screenshot_status)))
+			safe_conn.Conn.Write([]byte(write))
 			safe_conn.Lock.Unlock()
 			return
 		}

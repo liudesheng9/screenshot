@@ -55,6 +55,9 @@ func initControlFile() {
 
 func screenshotExec(thread_id int64) {
 	n := screenshot.NumActiveDisplays()
+	Global.Global_map_num_display_Mutex.Lock()
+	Global.Global_map_num_display[thread_id] = n
+	Global.Global_map_num_display_Mutex.Unlock()
 	currentTime := utils.GetDatetime()
 	wg := new(sync.WaitGroup)
 	wg.Add(n)
@@ -76,8 +79,16 @@ func screenshotExec(thread_id int64) {
 			Global.Global_map_image_Mutex.Lock()
 			Global.Global_map_image[i][thread_id] = img
 			Global.Global_map_image_Mutex.Unlock()
+
 			if thread_id > 1 {
 				loop_num := 0
+				if Global.Global_map_num_display[thread_id-1] == 0 {
+					goto save_screenshot
+				}
+				if Global.Global_map_num_display[thread_id-1] != 0 && Global.Global_map_num_display[thread_id-1] != n {
+					goto save_screenshot
+				}
+
 				for {
 					time.Sleep(500 * time.Millisecond)
 					// Global.Global_map_image_Mutex.Lock()
@@ -132,6 +143,9 @@ func screenshotExec(thread_id int64) {
 		}()
 	}
 	wg.Wait()
+	Global.Global_map_num_display_Mutex.Lock()
+	delete(Global.Global_map_num_display, thread_id-1)
+	Global.Global_map_num_display_Mutex.Unlock()
 }
 
 func thread_screenshot() {
@@ -342,6 +356,8 @@ func init_program() {
 
 	Global.Global_map_image = make(map[int]map[int64]*image.RGBA)
 	Global.Global_map_image_Mutex = new(sync.Mutex)
+	Global.Global_map_num_display = make(map[int64]int)
+	Global.Global_map_num_display_Mutex = new(sync.Mutex)
 
 	Global.Global_screenshot_status = 0
 	Global.Global_screenshot_status_Mutex = new(sync.Mutex)

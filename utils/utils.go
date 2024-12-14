@@ -132,6 +132,7 @@ type Ss_constant_config struct {
 	Database_path     string
 	Toml_path         string
 	Screenshot_second int
+	Tcp_port          int
 }
 
 func (c *Ss_constant_config) Init_ss_constant_config() {

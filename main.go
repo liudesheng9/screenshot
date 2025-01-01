@@ -268,7 +268,7 @@ func thread_manage_library() {
 }
 
 func thread_memimg_checking() {
-	mem_check_Ticker := time.NewTicker(1 * time.Hour)
+	mem_check_Ticker := time.NewTicker(8 * time.Hour)
 	status_Ticker := time.NewTicker(5 * time.Second)
 loop:
 	for {

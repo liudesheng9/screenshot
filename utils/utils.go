@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,6 +46,47 @@ func Retry_single_task(task Single_Task, sig_ss *int, args ...interface{}) {
 			}
 		}
 	}
+}
+
+func Retry_task_restricted(task Task, sig_ss *int, iter_num int, args ...interface{}) (interface{}, error) {
+	var err_out error
+	for i := 0; i < iter_num; i++ {
+		result, err := task(args...)
+		if err == nil {
+			return result, nil
+		} else {
+			fmt.Printf("Error: %v\n", err)
+			time.Sleep(5 * time.Second)
+			if *sig_ss == 0 {
+				return result, err
+			}
+			if i == iter_num-1 {
+				err_out = err
+			}
+		}
+	}
+	return nil, err_out
+
+}
+
+func Retry_single_task_restricted(task Single_Task, sig_ss *int, iter_num int, args ...interface{}) error {
+	var err_out error
+	for i := 0; i < iter_num; i++ {
+		err := task(args...)
+		if err == nil {
+			return nil
+		} else {
+			fmt.Printf("Error: %v\n", err)
+			time.Sleep(5 * time.Second)
+			if *sig_ss == 0 {
+				return nil
+			}
+			if i == iter_num-1 {
+				err_out = err
+			}
+		}
+	}
+	return err_out
 }
 
 type Safe_connection struct {
@@ -202,4 +244,28 @@ func In_string_list_index(query string, list []string) int {
 type Image_thread_id struct {
 	Img *image.RGBA
 	Id  int64
+}
+
+func exec_command(command string) error {
+	cmd := exec.Command(command)
+	rootdir := "./"
+	cmd.Dir = rootdir
+	//execute cmd
+	/*
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP, // Windows 下创建新进程组
+		}
+
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	*/
+	err := cmd.Start()
+
+	if err != nil {
+		// fmt.Println("cmd execute failed: ", err)
+		return err
+	}
+	// fmt.Println("start ss.exe success")
+	return nil
 }

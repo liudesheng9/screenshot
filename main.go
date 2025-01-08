@@ -353,6 +353,7 @@ func init_program() {
 
 	Global.Global_database = library_manager.Init_database()
 	Global.Global_database_net = library_manager.Init_database()
+	Global.Global_database_managebot = library_manager.Init_database()
 
 	Global.Global_map_image = make(map[int]map[int64]*image.RGBA)
 	Global.Global_map_image_Mutex = new(sync.Mutex)
@@ -368,6 +369,7 @@ func close_program() {
 	closeLog()
 	Global.Global_database.Close()
 	Global.Global_database_net.Close()
+	Global.Global_database_managebot.Close()
 	time.Sleep(5 * time.Second) // make sure all zombie goroutine get the stop signal before Globalss_sig is released!
 }
 

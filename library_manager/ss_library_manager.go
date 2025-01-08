@@ -66,12 +66,12 @@ func create_database() error {
 	return nil
 }
 
-func insert_data_database(file string) error {
+func insert_data_database(file string, database *sql.DB) error {
 	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
 	Meta_data, err := image_manipulation.Substract_Meta_from_file(file)
 	if err != nil {
-		_, err = Global.Global_database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
+		_, err = database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
 		if err != nil {
 			fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, hashStringSHA256(filepath.Base(file)))
 			return err
@@ -81,7 +81,7 @@ func insert_data_database(file string) error {
 	Meta_map := image_manipulation.Convert_Meta_to_interface_map(Meta_data)
 	fileName := filepath.Base(file)
 	Meta_map["file_name"] = fileName
-	_, err = Global.Global_database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
+	_, err = database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
 	if err != nil {
 		fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, hashStringSHA256(filepath.Base(file)))
 		return err
@@ -89,11 +89,11 @@ func insert_data_database(file string) error {
 	return nil
 }
 
-func insert_data_database_worker_manager(file_list []string, numWorkers int) {
+func insert_data_database_worker_manager(file_list []string, numWorkers int, database *sql.DB) {
 	numTasks := len(file_list)
 
 	single_task_insert_data_database := func(args ...interface{}) error {
-		return insert_data_database(args[0].(string))
+		return insert_data_database(args[0].(string), database)
 	}
 	var wg sync.WaitGroup
 
@@ -148,7 +148,7 @@ func Insert_library(file_list []string) {
 		return create_database()
 	}
 	utils.Retry_single_task(single_task_create_database, Global.Globalsig_ss)
-	insert_data_database_worker_manager(file_list, 3)
+	insert_data_database_worker_manager(file_list, 3, Global.Global_database)
 
 	remove_cache_to_memimg_manager(file_list)
 }
@@ -159,12 +159,12 @@ func query_data_exists_database(file string) (bool, error) {
 	query_hashSHA256 := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ?)"
 	var exists_file_name bool
 	var exists_hashSHA256 bool
-	err := Global.Global_database.QueryRow(query_file_name, filename).Scan(&exists_file_name)
+	err := Global.Global_database_managebot.QueryRow(query_file_name, filename).Scan(&exists_file_name)
 	if err != nil {
 		log.Fatalf("Failed to query: %v", err)
 		return false, err
 	}
-	err = Global.Global_database.QueryRow(query_hashSHA256, hashStringSHA256(filename)).Scan(&exists_hashSHA256)
+	err = Global.Global_database_managebot.QueryRow(query_hashSHA256, hashStringSHA256(filename)).Scan(&exists_hashSHA256)
 	if err != nil {
 		log.Fatalf("Failed to query: %v", err)
 		return false, err
@@ -181,7 +181,7 @@ func query_data_insert_database(file string) error {
 	if exists {
 		return nil
 	}
-	err := insert_data_database(file)
+	err := insert_data_database(file, Global.Global_database_managebot)
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ var Global_cache_path_Mutex *sync.Mutex
 var Global_cache_path_instant_Mutex *sync.Mutex
 
 var Global_database *sql.DB
+var Global_database_managebot *sql.DB
 var Global_database_net *sql.DB
 
 var Global_logFile *os.File
@@ -27,7 +28,6 @@ var Global_map_image map[int]map[int64]*image.RGBA
 var Global_map_image_Mutex *sync.Mutex
 var Global_map_num_display map[int64]int
 var Global_map_num_display_Mutex *sync.Mutex
-
 
 // state identitier
 var Global_screenshot_status int

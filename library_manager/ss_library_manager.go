@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"screenshot_server/Global"
 	"screenshot_server/image_manipulation"
@@ -123,7 +122,7 @@ func remove_cache_to_memimg(file string) error {
 	img_path := Global.Global_constant_config.Img_path
 	fileName := filepath.Base(file)
 	newPath := filepath.Join(img_path, fileName)
-	err := os.Rename(file, newPath)
+	err := utils.Move_file(file, newPath)
 	if err != nil {
 		log.Fatalf("Failed to move file: %v", err)
 		// return err

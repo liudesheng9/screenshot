@@ -1,5 +1,5 @@
 Cache_path = "./cache"
-Img_path = "./img"
+Img_path = "E:/data/screenshot/img"
 Dump_path = "./dump"
 Database_path = "./example.db"
 Toml_path = "./config.toml"

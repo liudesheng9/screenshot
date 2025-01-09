@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"image"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -267,5 +268,47 @@ func exec_command(command string) error {
 		return err
 	}
 	// fmt.Println("start ss.exe success")
+	return nil
+}
+
+func Copy_file(src, dst string) error {
+	// open source file
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("cannot open source file: %w", err)
+	}
+	defer sourceFile.Close()
+
+	// create destination file
+	destinationFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("failed to create dest file: %w", err)
+	}
+	defer destinationFile.Close()
+
+	// copy data to destination file
+	_, err = io.Copy(destinationFile, sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to copy file %w", err)
+	}
+
+	// flush in-memory copy
+	err = destinationFile.Sync()
+	if err != nil {
+		return fmt.Errorf("sync failed %w", err)
+	}
+
+	return nil
+}
+
+func Move_file(src, dst string) error {
+	err := Copy_file(src, dst)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(src)
+	if err != nil {
+		return fmt.Errorf("failed to remove file %w", err)
+	}
 	return nil
 }

@@ -32,3 +32,6 @@ var Global_map_num_display_Mutex *sync.Mutex
 // state identitier
 var Global_screenshot_status int
 var Global_screenshot_status_Mutex *sync.Mutex
+
+// control the cache behavior
+var Global_store int

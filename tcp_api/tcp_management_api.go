@@ -239,19 +239,35 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 		Global.Global_screenshot_status_Mutex.Lock()
 		screenshot_status := Global.Global_screenshot_status
 		Global.Global_screenshot_status_Mutex.Unlock()
+		safe_conn.Lock.Lock()
 		if screenshot_status <= 0 {
-			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("screenshot state: off"))
-			safe_conn.Lock.Unlock()
-			return
 		} else {
 			write := "\nscreenshot state: running"
 			write += "\nrunning thread num: " + strconv.Itoa(screenshot_status)
-			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte(write))
-			safe_conn.Lock.Unlock()
-			return
 		}
+		if Global.Global_store == 0 {
+			safe_conn.Conn.Write([]byte("\nstore: off"))
+		} else {
+			safe_conn.Conn.Write([]byte("\nstore: on"))
+		}
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 2 && recv_list[1] == "store" {
+		Global.Global_store = 1
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("store on"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if len(recv_list) == 2 && recv_list[1] == "nostore" {
+		Global.Global_store = 0
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("store off"))
+		safe_conn.Lock.Unlock()
+		return
 	}
 	if len(recv_list) > 1 && recv_list[1] == "config" {
 		execute_config_operation(safe_conn, recv_list[2:])

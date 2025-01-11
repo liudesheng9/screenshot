@@ -240,27 +240,30 @@ func thread_manage_library() {
 	}
 	for {
 		time.Sleep(5 * time.Second)
-		Global.Global_cache_path_Mutex.Lock()
-		file_num := utils.Retry_task(task_get_target_file_num, Global.Globalsig_ss, Global.Global_constant_config.Cache_path).(int)
-		if file_num > 50 {
-			cache_path := Global.Global_constant_config.Cache_path
-			get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, cache_path).(utils.Get_target_file_path_name_return)
-			file_path_list := get_target_file_path_name_return.Files
-			file_name_list := get_target_file_path_name_return.FileNames
-			for {
-				time.Sleep(5 * time.Second)
-				unlocked := library_manager.Check_if_locked(file_name_list)
-				fmt.Println("unlocked : ", unlocked)
-				if unlocked {
-					library_manager.Remove_lock(file_name_list)
-					library_manager.Insert_library(file_path_list)
-					break
-				} else {
-					continue
+		if Global.Global_store == 1 {
+			Global.Global_cache_path_Mutex.Lock()
+			file_num := utils.Retry_task(task_get_target_file_num, Global.Globalsig_ss, Global.Global_constant_config.Cache_path).(int)
+			if file_num > 50 {
+				cache_path := Global.Global_constant_config.Cache_path
+				get_target_file_path_name_return := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, cache_path).(utils.Get_target_file_path_name_return)
+				file_path_list := get_target_file_path_name_return.Files
+				file_name_list := get_target_file_path_name_return.FileNames
+				for {
+					time.Sleep(5 * time.Second)
+					unlocked := library_manager.Check_if_locked(file_name_list)
+					fmt.Println("unlocked : ", unlocked)
+					if unlocked {
+						library_manager.Remove_lock(file_name_list)
+						library_manager.Insert_library(file_path_list)
+						break
+					} else {
+						continue
+					}
 				}
 			}
+			Global.Global_cache_path_Mutex.Unlock()
 		}
-		Global.Global_cache_path_Mutex.Unlock()
+
 		if *Global.Globalsig_ss == 0 {
 			break
 		}
@@ -363,6 +366,8 @@ func init_program() {
 	Global.Global_screenshot_status = 0
 	Global.Global_screenshot_status_Mutex = new(sync.Mutex)
 
+	Global.Global_store = 0
+
 }
 
 func close_program() {
@@ -396,11 +401,13 @@ func main() {
 		wg.Done()
 		// fmt.Println("thread_manage_library closed")
 	}()
-	go func() {
-		thread_memimg_checking()
-		wg.Done()
-		// fmt.Println("thread_memimg_checking closed")
-	}()
+	/*
+		go func() {
+			thread_memimg_checking()
+			wg.Done()
+			// fmt.Println("thread_memimg_checking closed")
+		}()
+	*/
 	go func() {
 		thread_tidy_data_database()
 		wg.Done()

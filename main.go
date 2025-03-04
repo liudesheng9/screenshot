@@ -384,7 +384,7 @@ func main() {
 	// gui_window := startGUI()
 
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(4)
 	go func() {
 		thread_screenshot()
 		wg.Done()

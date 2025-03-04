@@ -68,21 +68,45 @@ func create_database() error {
 func insert_data_database(file string, database *sql.DB) error {
 	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
+
+	// Check if file already exists in database
+	fileName := filepath.Base(file)
+	fileID := hashStringSHA256(fileName)
+
+	// Check if record exists
+	checkSQL := `SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ? OR file_name = ?)`
+	var exists bool
+	err := database.QueryRow(checkSQL, fileID, fileName).Scan(&exists)
+	if err != nil {
+		fmt.Printf("Failed to check if record exists: %v, %s, %s\n", err, file, fileID)
+		return err
+	}
+
+	// Delete previous entry only if it exists
+	if exists {
+		deleteSQL := `DELETE FROM screenshots WHERE id = ? OR file_name = ?`
+		_, err := database.Exec(deleteSQL, fileID, fileName)
+		if err != nil {
+			fmt.Printf("Failed to delete existing entry: %v, %s, %s\n", err, file, fileID)
+			return err
+		}
+	}
+
+	// Continue with the regular insert process
 	Meta_data, err := image_manipulation.Substract_Meta_from_file(file)
 	if err != nil {
-		_, err = database.Exec(insertSQL_NULL, hashStringSHA256(filepath.Base(file)), filepath.Base(file))
+		_, err = database.Exec(insertSQL_NULL, fileID, fileName)
 		if err != nil {
-			fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, hashStringSHA256(filepath.Base(file)))
+			fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, fileID)
 			return err
 		}
 		return nil
 	}
 	Meta_map := image_manipulation.Convert_Meta_to_interface_map(Meta_data)
-	fileName := filepath.Base(file)
 	Meta_map["file_name"] = fileName
-	_, err = database.Exec(insertSQL, hashStringSHA256(filepath.Base(file)), fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
+	_, err = database.Exec(insertSQL, fileID, fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
 	if err != nil {
-		fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, hashStringSHA256(filepath.Base(file)))
+		fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, fileID)
 		return err
 	}
 	return nil

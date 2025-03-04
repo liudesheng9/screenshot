@@ -36,6 +36,61 @@ The application runs multiple concurrent threads:
 3. **Database Maintenance Thread**: Performs periodic cleanup of the database
 4. **TCP Communication Thread**: Handles remote control via TCP connections
 
+## TCP API Commands
+
+The server supports various commands through its TCP interface for control, querying and managing the screenshot service.
+
+### Server Control Commands
+
+- **0**: Stop the server - Sets the global signal to stop all services
+- **1**: Start the server - Sets the global signal to start all services
+- **2**: Pause the server - Sets the global signal to pause all services
+- **hello server**: Connection check - Returns "1" to confirm the server is running
+
+### SQL Commands (Database Queries)
+
+- **sql count**: Get total count of screenshots in the database
+  - `sql count`: Returns the total number of screenshots in the database
+  - `sql count date YYYYMMDD`: Returns the count of screenshots taken on a specific date (format: YYYYMMDD)
+  - `sql count date all`: Returns the count of screenshots for each date in the database, sorted chronologically
+  - `sql count hour HH`: Returns the count of screenshots taken during a specific hour (00-23)
+  - `sql count hour all`: Returns the count of screenshots for each hour (00-23), aggregated across all dates
+  - `sql count date YYYYMMDD hour all`: Returns the count of screenshots per hour for a specific date
+  - `sql count hour HH date all`: Returns the count of screenshots per date for a specific hour
+  - `sql count date YYYYMMDD hour HH`: Returns the count of screenshots for a specific date and hour
+
+- **sql dump**: Save query results to a file in the dump path
+  - `sql dump count`: Dumps the total count to a file
+  - `sql dump count date YYYYMMDD`: Dumps the count for a specific date to a file
+  - `sql dump count date all`: Dumps counts for all dates to a file
+  - `sql dump count hour HH`: Dumps the count for a specific hour to a file
+  - `sql dump count hour all`: Dumps counts for all hours to a file
+  - `sql dump count date YYYYMMDD hour all`: Dumps counts per hour for a specific date to a file
+  - `sql dump count hour HH date all`: Dumps counts per date for a specific hour to a file
+  - `sql dump filename`: Dumps all filenames to a file
+  - `sql dump filename date YYYYMMDD`: Dumps filenames for a specific date to a file
+  - `sql dump filename hour HH`: Dumps filenames for a specific hour to a file
+  - `sql dump filename date YYYYMMDD hour HH`: Dumps filenames for a specific date and hour to a file
+
+- **sql min_date**: Returns the earliest date that has screenshots in the database
+- **sql max_date**: Returns the latest date that has screenshots in the database
+
+### Management Commands
+
+- **man dump clean**: Cleans up dump files from the dump directory
+- **man mem check**: Starts the memory image checking robot to scan for image integrity
+- **man tidy database**: Runs database maintenance to clean up and optimize the database
+- **man status**: Shows the current status of the screenshot service and storage
+  - Displays if screenshot service is running or stopped
+  - Shows the number of active screenshot threads if running
+  - Indicates if storage is enabled or disabled
+  
+- **man store**: Enables storage of screenshots (turns on saving to disk)
+- **man nostore**: Disables storage of screenshots (turns off saving to disk)
+- **man config load [path]**: Loads a configuration file from the specified path
+  - Updates configuration settings dynamically without restarting
+  - Currently only updates the screenshot_second parameter
+
 ## Database Schema
 
 Screenshots are stored in a SQLite database with the following schema:

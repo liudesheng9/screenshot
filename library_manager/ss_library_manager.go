@@ -171,7 +171,7 @@ func Insert_library(file_list []string) {
 		return create_database()
 	}
 	utils.Retry_single_task(single_task_create_database, Global.Globalsig_ss)
-	insert_data_database_worker_manager(file_list, 3, Global.Global_database)
+	insert_data_database_worker_manager(file_list, 1, Global.Global_database)
 
 	remove_cache_to_memimg_manager(file_list)
 }

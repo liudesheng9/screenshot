@@ -5,6 +5,7 @@ A headless screenshot server application for Windows that captures, manages, and
 ## Overview
 
 This application is a background service that:
+
 1. Periodically captures screenshots from all displays
 2. Stores screenshots with metadata in a database
 3. Provides TCP interface for remote access and control
@@ -50,6 +51,7 @@ The server supports various commands through its TCP interface for control, quer
 ### SQL Commands (Database Queries)
 
 - **sql count**: Get total count of screenshots in the database
+
   - `sql count`: Returns the total number of screenshots in the database
   - `sql count date YYYYMMDD`: Returns the count of screenshots taken on a specific date (format: YYYYMMDD)
   - `sql count date all`: Returns the count of screenshots for each date in the database, sorted chronologically
@@ -60,6 +62,7 @@ The server supports various commands through its TCP interface for control, quer
   - `sql count date YYYYMMDD hour HH`: Returns the count of screenshots for a specific date and hour
 
 - **sql dump**: Save query results to a file in the dump path
+
   - `sql dump count`: Dumps the total count to a file
   - `sql dump count date YYYYMMDD`: Dumps the count for a specific date to a file
   - `sql dump count date all`: Dumps counts for all dates to a file
@@ -75,6 +78,11 @@ The server supports various commands through its TCP interface for control, quer
 - **sql min_date**: Returns the earliest date that has screenshots in the database
 - **sql max_date**: Returns the latest date that has screenshots in the database
 
+### Image Export Commands
+
+- **img count YYYYMMDDHHMM-HHMM**: Returns the number of archived images in Img_path for the given same-day time range (inclusive)
+- **img copy YYYYMMDDHHMM-HHMM [dest]**: Copies matching images to `dest` (default `./img_dump` when omitted)
+
 ### Management Commands
 
 - **man dump clean**: Cleans up dump files from the dump directory
@@ -84,7 +92,6 @@ The server supports various commands through its TCP interface for control, quer
   - Displays if screenshot service is running or stopped
   - Shows the number of active screenshot threads if running
   - Indicates if storage is enabled or disabled
-  
 - **man store**: Enables storage of screenshots (turns on saving to disk)
 - **man nostore**: Disables storage of screenshots (turns off saving to disk)
 - **man config load [path]**: Loads a configuration file from the specified path
@@ -94,6 +101,7 @@ The server supports various commands through its TCP interface for control, quer
 ## Database Schema
 
 Screenshots are stored in a SQLite database with the following schema:
+
 - id: Unique identifier (SHA-256 hash of filename)
 - hash: Image hash
 - hash_kind: Type of hash algorithm used
@@ -104,6 +112,7 @@ Screenshots are stored in a SQLite database with the following schema:
 ## Network Interface
 
 The application listens on a TCP port (configurable) on 127.0.0.1, allowing for:
+
 - Remote control commands
 - Screenshot retrieval
 - Status monitoring
@@ -114,4 +123,3 @@ The application listens on a TCP port (configurable) on 127.0.0.1, allowing for:
 2. Screenshots are automatically taken at defined intervals
 3. Access and control via TCP interface
 4. Screenshots are stored in the configured cache path
-

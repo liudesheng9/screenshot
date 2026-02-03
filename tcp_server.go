@@ -62,6 +62,10 @@ func excute_recv_command(safe_conn utils.Safe_connection, recv string) {
 		tcp_api.Execute_sql(safe_conn, recv)
 		return
 	}
+	if strings.Split(recv, " ")[0] == "img" {
+		tcp_api.Execute_img(safe_conn, recv)
+		return
+	}
 	safe_conn.Lock.Lock()
 	safe_conn.Conn.Write([]byte("received: " + recv))
 	safe_conn.Lock.Unlock()

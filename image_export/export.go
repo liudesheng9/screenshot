@@ -128,8 +128,14 @@ func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, err
 		destPath = defaultDumpDir
 	}
 	destPath = filepath.Clean(destPath)
+	if err := validateDestPath(imgPath, destPath); err != nil {
+		return result, err
+	}
 	if err := os.MkdirAll(destPath, os.ModePerm); err != nil {
 		return result, fmt.Errorf("failed to create dest directory: %w", err)
+	}
+	if err := clearDirectoryContents(destPath); err != nil {
+		return result, fmt.Errorf("failed to clear dest directory: %w", err)
 	}
 
 	for _, src := range paths {
@@ -265,6 +271,58 @@ func validateImgPath(imgPath string) error {
 		return fmt.Errorf("img_path is not a directory")
 	}
 	return nil
+}
+
+func validateDestPath(imgPath, destPath string) error {
+	if strings.TrimSpace(destPath) == "" {
+		return fmt.Errorf("dest path is empty")
+	}
+	if isPathRoot(destPath) {
+		return fmt.Errorf("dest path cannot be root")
+	}
+
+	absDest, err := filepath.Abs(destPath)
+	if err != nil {
+		return fmt.Errorf("dest path invalid: %w", err)
+	}
+	absImg, err := filepath.Abs(imgPath)
+	if err != nil {
+		return fmt.Errorf("img path invalid: %w", err)
+	}
+	if absDest == absImg {
+		return fmt.Errorf("dest path cannot be the same as img_path")
+	}
+	if rel, err := filepath.Rel(absImg, absDest); err == nil {
+		if rel == "." || !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".." {
+			return fmt.Errorf("dest path cannot be inside img_path")
+		}
+	}
+	return nil
+}
+
+func clearDirectoryContents(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		target := filepath.Join(dir, entry.Name())
+		if err := os.RemoveAll(target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isPathRoot(p string) bool {
+	clean := filepath.Clean(p)
+	vol := filepath.VolumeName(clean)
+	if vol != "" {
+		rest := strings.TrimPrefix(clean, vol)
+		rest = strings.TrimPrefix(rest, string(os.PathSeparator))
+		return rest == ""
+	}
+	return clean == string(os.PathSeparator) || clean == "."
 }
 
 func parseHHMM(s string) (int, int, error) {

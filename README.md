@@ -81,7 +81,7 @@ The server supports various commands through its TCP interface for control, quer
 ### Image Export Commands
 
 - **img count YYYYMMDDHHMM-HHMM**: Returns the number of archived images in Img_path for the given same-day time range (inclusive)
-- **img copy YYYYMMDDHHMM-HHMM [dest]**: Copies matching images to `dest` (default `./img_dump` when omitted)
+- **img copy YYYYMMDDHHMM-HHMM [dest]**: Clears `dest` then copies matching images (default `./img_dump` when omitted)
 
 ### Management Commands
 

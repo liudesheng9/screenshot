@@ -40,12 +40,13 @@ func executeImgCount(safe_conn utils.Safe_connection, args []string) {
 		writeImgResponse(safe_conn, "img error: "+err.Error())
 		return
 	}
-	count, err := image_export.CountImages(Global.Global_database_net, tr)
+	imgPath := Global.Global_constant_config.Img_path
+	count, err := image_export.CountImages(Global.Global_database_net, imgPath, tr)
 	if err != nil {
 		writeImgResponse(safe_conn, "img error: "+err.Error())
 		return
 	}
-	writeImgResponse(safe_conn, fmt.Sprintf("img count: %d", count))
+	writeImgResponse(safe_conn, fmt.Sprintf("img count: %s", count.Summary()))
 }
 
 func executeImgCopy(safe_conn utils.Safe_connection, args []string) {

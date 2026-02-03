@@ -24,14 +24,34 @@ type TimeRange struct {
 }
 
 type CopyResult struct {
-	Total   int
-	Copied  int
-	Skipped int
-	Failed  int
+	Archived int
+	Existing int
+	Missing  int
+	Copied   int
+	Skipped  int
+	Failed   int
 }
 
 func (r CopyResult) Summary() string {
-	return fmt.Sprintf("total=%d copied=%d skipped=%d failed=%d", r.Total, r.Copied, r.Skipped, r.Failed)
+	return fmt.Sprintf(
+		"archived=%d exist=%d missing=%d copied=%d skipped=%d failed=%d",
+		r.Archived,
+		r.Existing,
+		r.Missing,
+		r.Copied,
+		r.Skipped,
+		r.Failed,
+	)
+}
+
+type CountResult struct {
+	Archived int
+	Existing int
+	Missing  int
+}
+
+func (r CountResult) Summary() string {
+	return fmt.Sprintf("archived=%d exist=%d missing=%d", r.Archived, r.Existing, r.Missing)
 }
 
 func ParseRange(input string) (TimeRange, error) {
@@ -80,35 +100,28 @@ func ParseRange(input string) (TimeRange, error) {
 	}, nil
 }
 
-func CountImages(db *sql.DB, tr TimeRange) (int, error) {
-	if db == nil {
-		return 0, fmt.Errorf("database is nil")
-	}
-	query := `
-		SELECT COUNT(*)
-		FROM screenshots
-		WHERE file_name IS NOT NULL
-		  AND year = ?
-		  AND month = ?
-		  AND day = ?
-		  AND (hour * 60 + minute) BETWEEN ? AND ?
-	`
-	var count int
-	err := db.QueryRow(query, tr.Year, tr.Month, tr.Day, tr.StartMinute, tr.EndMinute).Scan(&count)
+func CountImages(db *sql.DB, imgPath string, tr TimeRange) (CountResult, error) {
+	archived, existing, missing, err := collectExistingFiles(db, imgPath, tr)
 	if err != nil {
-		return 0, err
+		return CountResult{}, err
 	}
-	return count, nil
+	return CountResult{
+		Archived: archived,
+		Existing: len(existing),
+		Missing:  missing,
+	}, nil
 }
 
 func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, error) {
 	result := CopyResult{}
 
-	paths, err := ListMatchingFiles(db, imgPath, tr)
+	archived, paths, missing, err := collectExistingFiles(db, imgPath, tr)
 	if err != nil {
 		return result, err
 	}
-	result.Total = len(paths)
+	result.Archived = archived
+	result.Existing = len(paths)
+	result.Missing = missing
 
 	destPath := strings.TrimSpace(dest)
 	if destPath == "" {
@@ -140,34 +153,20 @@ func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, err
 	return result, nil
 }
 
-func ListMatchingFiles(db *sql.DB, imgPath string, tr TimeRange) ([]string, error) {
-	if err := validateImgPath(imgPath); err != nil {
-		return nil, err
-	}
-	names, err := queryMatchingFileNames(db, tr)
-	if err != nil {
-		return nil, err
-	}
-	matches := make([]string, 0, len(names))
-	for _, name := range names {
-		matches = append(matches, filepath.Join(imgPath, name))
-	}
-	return matches, nil
-}
-
 func queryMatchingFileNames(db *sql.DB, tr TimeRange) ([]string, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is nil")
 	}
 	query := `
-		SELECT file_name
+		SELECT DISTINCT file_name
 		FROM screenshots
 		WHERE file_name IS NOT NULL
+		  AND TRIM(file_name) != ''
 		  AND year = ?
 		  AND month = ?
 		  AND day = ?
 		  AND (hour * 60 + minute) BETWEEN ? AND ?
-		ORDER BY hour, minute, second
+		ORDER BY file_name
 	`
 	rows, err := db.Query(query, tr.Year, tr.Month, tr.Day, tr.StartMinute, tr.EndMinute)
 	if err != nil {
@@ -195,6 +194,63 @@ func queryMatchingFileNames(db *sql.DB, tr TimeRange) ([]string, error) {
 		return nil, err
 	}
 	return names, nil
+}
+
+func queryArchiveCount(db *sql.DB, tr TimeRange) (int, error) {
+	if db == nil {
+		return 0, fmt.Errorf("database is nil")
+	}
+	query := `
+		SELECT COUNT(DISTINCT file_name)
+		FROM screenshots
+		WHERE file_name IS NOT NULL
+		  AND TRIM(file_name) != ''
+		  AND year = ?
+		  AND month = ?
+		  AND day = ?
+		  AND (hour * 60 + minute) BETWEEN ? AND ?
+	`
+	var count int
+	err := db.QueryRow(query, tr.Year, tr.Month, tr.Day, tr.StartMinute, tr.EndMinute).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func collectExistingFiles(db *sql.DB, imgPath string, tr TimeRange) (int, []string, int, error) {
+	if err := validateImgPath(imgPath); err != nil {
+		return 0, nil, 0, err
+	}
+	archived, err := queryArchiveCount(db, tr)
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	names, err := queryMatchingFileNames(db, tr)
+	if err != nil {
+		return archived, nil, 0, err
+	}
+
+	existing := make([]string, 0, len(names))
+	missing := 0
+	for _, name := range names {
+		full := filepath.Join(imgPath, name)
+		info, statErr := os.Stat(full)
+		if statErr == nil {
+			if info.IsDir() {
+				missing++
+				continue
+			}
+			existing = append(existing, full)
+			continue
+		}
+		if os.IsNotExist(statErr) {
+			missing++
+			continue
+		}
+		return archived, existing, missing, fmt.Errorf("stat %s: %w", full, statErr)
+	}
+	return archived, existing, missing, nil
 }
 
 func validateImgPath(imgPath string) error {

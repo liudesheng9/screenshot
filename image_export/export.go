@@ -3,16 +3,32 @@ package image_export
 import (
 	"database/sql"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
-
-	"screenshot_server/utils"
 )
 
-const defaultDumpDir = "./img_dump"
+const (
+	defaultDumpDir     = "./img_dump"
+	defaultJPEGQuality = 85
+	defaultWorkers     = 10
+	jpegFileExt        = ".jpg"
+)
+
+type imageTransformTask struct {
+	sourcePath string
+	targetPath string
+}
+
+type imageTransformResult struct {
+	err error
+}
 
 type TimeRange struct {
 	Date        string
@@ -123,11 +139,7 @@ func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, err
 	result.Existing = len(paths)
 	result.Missing = missing
 
-	destPath := strings.TrimSpace(dest)
-	if destPath == "" {
-		destPath = defaultDumpDir
-	}
-	destPath = filepath.Clean(destPath)
+	destPath := resolveDestPath(dest)
 	if err := validateDestPath(imgPath, destPath); err != nil {
 		return result, err
 	}
@@ -138,25 +150,101 @@ func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, err
 		return result, fmt.Errorf("failed to clear dest directory: %w", err)
 	}
 
-	for _, src := range paths {
-		base := filepath.Base(src)
-		target := filepath.Join(destPath, base)
-		if _, err := os.Stat(target); err == nil {
-			result.Skipped++
-			continue
-		} else if !os.IsNotExist(err) {
-			result.Failed++
-			continue
-		}
+	transformTasks, skipped, failed := buildImageTransformTasks(paths, destPath)
+	result.Skipped += skipped
+	result.Failed += failed
 
-		if err := utils.Copy_file(src, target); err != nil {
-			result.Failed++
-			continue
-		}
-		result.Copied++
-	}
+	copied, convertFailed := processImageTransformQueue(transformTasks, defaultWorkers, defaultJPEGQuality)
+	result.Copied += copied
+	result.Failed += convertFailed
 
 	return result, nil
+}
+
+func buildImageTransformTasks(paths []string, destPath string) ([]imageTransformTask, int, int) {
+	usedTargets := make(map[string]struct{}, len(paths))
+	tasks := make([]imageTransformTask, 0, len(paths))
+	skipped := 0
+	failed := 0
+
+	for _, src := range paths {
+		targetName, err := toJPEGFileName(filepath.Base(src))
+		if err != nil {
+			failed++
+			continue
+		}
+		if _, exists := usedTargets[targetName]; exists {
+			skipped++
+			continue
+		}
+		usedTargets[targetName] = struct{}{}
+
+		tasks = append(tasks, imageTransformTask{
+			sourcePath: src,
+			targetPath: filepath.Join(destPath, targetName),
+		})
+	}
+	return tasks, skipped, failed
+}
+
+func processImageTransformQueue(tasks []imageTransformTask, workerCount, jpegQuality int) (int, int) {
+	if len(tasks) == 0 {
+		return 0, 0
+	}
+
+	workerTotal := normalizeWorkerCount(workerCount)
+	taskQueue := make(chan imageTransformTask, workerTotal)
+	resultQueue := make(chan imageTransformResult, len(tasks))
+
+	var workers sync.WaitGroup
+	workers.Add(workerTotal)
+	for i := 0; i < workerTotal; i++ {
+		go func() {
+			defer workers.Done()
+			runImageTransformWorker(taskQueue, resultQueue, jpegQuality)
+		}()
+	}
+
+	go func() {
+		for _, task := range tasks {
+			taskQueue <- task
+		}
+		close(taskQueue)
+	}()
+
+	go func() {
+		workers.Wait()
+		close(resultQueue)
+	}()
+
+	copied := 0
+	failed := 0
+	for transformResult := range resultQueue {
+		if transformResult.err != nil {
+			failed++
+			continue
+		}
+		copied++
+	}
+	return copied, failed
+}
+
+func runImageTransformWorker(
+	taskQueue <-chan imageTransformTask,
+	resultQueue chan<- imageTransformResult,
+	jpegQuality int,
+) {
+	for task := range taskQueue {
+		err := convertImageToJPEG(task.sourcePath, task.targetPath, jpegQuality)
+		resultQueue <- imageTransformResult{err: err}
+	}
+}
+
+func normalizeWorkerCount(workerCount int) int {
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	return workerCount
 }
 
 func queryMatchingFileNames(db *sql.DB, tr TimeRange) ([]string, error) {
@@ -240,7 +328,10 @@ func collectExistingFiles(db *sql.DB, imgPath string, tr TimeRange) (int, []stri
 	existing := make([]string, 0, len(names))
 	missing := 0
 	for _, name := range names {
-		full := filepath.Join(imgPath, name)
+		full, err := resolvePathWithinRoot(imgPath, name)
+		if err != nil {
+			return archived, existing, missing, err
+		}
 		info, statErr := os.Stat(full)
 		if statErr == nil {
 			if info.IsDir() {
@@ -298,6 +389,103 @@ func validateDestPath(imgPath, destPath string) error {
 		}
 	}
 	return nil
+}
+
+func resolveDestPath(dest string) string {
+	destPath := strings.TrimSpace(dest)
+	if destPath == "" {
+		destPath = defaultDumpDir
+	}
+	return filepath.Clean(destPath)
+}
+
+func toJPEGFileName(name string) (string, error) {
+	baseName := strings.TrimSpace(name)
+	if baseName == "" {
+		return "", fmt.Errorf("empty file name")
+	}
+	ext := filepath.Ext(baseName)
+	stem := strings.TrimSpace(strings.TrimSuffix(baseName, ext))
+	if stem == "" {
+		return "", fmt.Errorf("invalid file name: %s", name)
+	}
+	return stem + jpegFileExt, nil
+}
+
+func convertImageToJPEG(srcPath, destPath string, quality int) error {
+	if quality < 1 || quality > 100 {
+		quality = defaultJPEGQuality
+	}
+
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("open source image %s: %w", srcPath, err)
+	}
+	defer srcFile.Close()
+
+	srcImage, _, err := image.Decode(srcFile)
+	if err != nil {
+		return fmt.Errorf("decode source image %s: %w", srcPath, err)
+	}
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(destPath), ".img_export_*.jpg")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", destPath, err)
+	}
+	tmpPath := tmpFile.Name()
+	keepTemp := false
+	tmpFileClosed := false
+	defer func() {
+		if !tmpFileClosed {
+			_ = tmpFile.Close()
+		}
+		if !keepTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := jpeg.Encode(tmpFile, srcImage, &jpeg.Options{Quality: quality}); err != nil {
+		return fmt.Errorf("encode jpeg %s: %w", destPath, err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return fmt.Errorf("sync jpeg %s: %w", destPath, err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close jpeg %s: %w", destPath, err)
+	}
+	tmpFileClosed = true
+	keepTemp = true
+
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		keepTemp = false
+		return fmt.Errorf("move jpeg into place %s: %w", destPath, err)
+	}
+	return nil
+}
+
+func resolvePathWithinRoot(root, child string) (string, error) {
+	cleanChild := filepath.Clean(strings.TrimSpace(child))
+	if cleanChild == "." || cleanChild == "" {
+		return "", fmt.Errorf("invalid file name: %q", child)
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("invalid root path: %w", err)
+	}
+	full := filepath.Join(absRoot, cleanChild)
+	absFull, err := filepath.Abs(full)
+	if err != nil {
+		return "", fmt.Errorf("invalid file path %q: %w", child, err)
+	}
+	rel, err := filepath.Rel(absRoot, absFull)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve file path %q: %w", child, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("file path escapes image directory: %q", child)
+	}
+	return absFull, nil
 }
 
 func clearDirectoryContents(dir string) error {

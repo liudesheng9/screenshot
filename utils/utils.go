@@ -312,3 +312,48 @@ func Move_file(src, dst string) error {
 	}
 	return nil
 }
+
+// RetryWithBackoff retries a function with exponential backoff
+// initialDelay: initial wait time (e.g., 1 * time.Second)
+// maxDelay: maximum wait time between retries (e.g., 30 * time.Second)
+// multiplier: backoff multiplier (e.g., 2)
+// maxRetries: maximum number of retry attempts
+// Returns the last error if all retries fail
+func RetryWithBackoff(operation func() error, initialDelay, maxDelay time.Duration, multiplier float64, maxRetries int) error {
+	var lastErr error
+	delay := initialDelay
+
+	for i := 0; i < maxRetries; i++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+
+		// Add jitter to prevent thundering herd (±25% randomization)
+		jitter := time.Duration(float64(delay) * (0.75 + 0.5*float64(time.Now().UnixNano()%100)/100.0))
+		time.Sleep(jitter)
+
+		// Calculate next delay with exponential backoff
+		nextDelay := time.Duration(float64(delay) * multiplier)
+		if nextDelay > maxDelay {
+			nextDelay = maxDelay
+		}
+		delay = nextDelay
+	}
+
+	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// EnsureDirectoryExists checks if a directory exists and creates it if not
+func EnsureDirectoryExists(path string) error {
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return os.MkdirAll(path, os.ModePerm)
+	}
+	return err
+}

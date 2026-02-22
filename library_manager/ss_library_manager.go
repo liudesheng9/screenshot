@@ -58,8 +58,9 @@ func create_database() error {
 	);`
 	_, err := Global.Global_database.Exec(createTableSQL)
 	if err != nil {
-		log.Fatalf("Failed to create table: %v", err)
-		return err
+		// Capture error instead of crashing
+		Global.AddStorageError("create_database", "", err.Error(), 0)
+		return fmt.Errorf("failed to create table: %w", err)
 	}
 	fmt.Println("Table created successfully")
 	return nil
@@ -144,12 +145,21 @@ func insert_data_database_worker_manager(file_list []string, numWorkers int, dat
 
 func remove_cache_to_memimg(file string) error {
 	img_path := Global.Global_constant_config.Img_path
+
+	// Ensure destination directory exists
+	err := utils.EnsureDirectoryExists(img_path)
+	if err != nil {
+		Global.AddStorageError("remove_cache_to_memimg", file, "failed to create img_path directory: "+err.Error(), 0)
+		return fmt.Errorf("failed to create img_path directory %s: %w", img_path, err)
+	}
+
 	fileName := filepath.Base(file)
 	newPath := filepath.Join(img_path, fileName)
-	err := utils.Move_file(file, newPath)
+	err = utils.Move_file(file, newPath)
 	if err != nil {
-		log.Fatalf("Failed to move file: %v", err)
-		// return err
+		// Capture error instead of crashing - file remains in cache
+		Global.AddStorageError("remove_cache_to_memimg", file, err.Error(), 0)
+		return fmt.Errorf("failed to move file %s to %s: %w", file, newPath, err)
 	}
 	return nil
 }
@@ -163,7 +173,7 @@ func remove_cache_to_memimg_manager(file_list []string) {
 	}
 }
 
-func Insert_library(file_list []string) {
+func Insert_library(file_list []string) error {
 	// library_parameter := init_library_parameter()
 	// cache_path := Global_constant_config.cache_path
 	// file_list := get_target_file_path(cache_path)
@@ -171,9 +181,23 @@ func Insert_library(file_list []string) {
 		return create_database()
 	}
 	utils.Retry_single_task(single_task_create_database, Global.Globalsig_ss)
+
 	insert_data_database_worker_manager(file_list, 1, Global.Global_database)
 
-	remove_cache_to_memimg_manager(file_list)
+	// Track failed moves so files stay in cache
+	failedMoves := []string{}
+	for _, file := range file_list {
+		err := remove_cache_to_memimg(file)
+		if err != nil {
+			Global.AddStorageError("Insert_library", file, "move failed: "+err.Error(), 0)
+			failedMoves = append(failedMoves, file)
+		}
+	}
+
+	if len(failedMoves) > 0 {
+		return fmt.Errorf("failed to move %d files (kept in cache): %v", len(failedMoves), failedMoves)
+	}
+	return nil
 }
 
 func query_data_exists_database(file string) (bool, error) {

@@ -74,6 +74,7 @@ func query_database_date_count_all() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	res := make(map[string]int)
 	for rows.Next() {
 		var formatted_date string
@@ -87,6 +88,9 @@ func query_database_date_count_all() (map[string]int, error) {
 		} else {
 			res[formatted_date]++
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	// sort the map by key
 	/*
@@ -170,6 +174,9 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 			res[formatted_date]++
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	/*
 		// sort the map by key
 		var keys []string
@@ -221,7 +228,31 @@ func query_database_date_hour_count_all(date string) (map[string]int, error) {
 			res[strconv.Itoa(hour)]++
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return res, nil
+}
+
+func query_database_date_hour_count(date string, hour string) (int, error) {
+	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
+	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
+		return strconv.Atoi(args[0].(string))
+	}
+	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
+
+	var count int
+	err := Global.Global_database_net.QueryRow(
+		"SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=? AND hour=?",
+		date_struct.Year,
+		date_struct.Month,
+		date_struct.Day,
+		hour_int,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func query_database_date_filename(date string) ([]string, error) {
@@ -312,165 +343,161 @@ func query_database_date_hour_filename(date string, hour string) ([]string, erro
 	return res, nil
 }
 
+func writeSQLResponse(safe_conn utils.Safe_connection, message string) {
+	safe_conn.Lock.Lock()
+	safe_conn.Conn.Write([]byte(message))
+	safe_conn.Lock.Unlock()
+}
+
+func validateCountDateArg(date string) (string, error) {
+	if len(date) != 8 {
+		return "", fmt.Errorf("invalid date format")
+	}
+	if _, err := strconv.Atoi(date); err != nil {
+		return "", fmt.Errorf("invalid date format")
+	}
+	return date, nil
+}
+
+func validateCountHourArg(hour string) (string, error) {
+	if len(hour) == 0 || len(hour) > 2 {
+		return "", fmt.Errorf("invalid hour format")
+	}
+	hourInt, err := strconv.Atoi(hour)
+	if err != nil || hourInt < 0 || hourInt > 23 {
+		return "", fmt.Errorf("invalid hour format")
+	}
+	return strconv.Itoa(hourInt), nil
+}
+
+func formatDateCounts(res map[string]int) string {
+	var keys []string
+	for k := range res {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var builder strings.Builder
+	for _, date := range keys {
+		builder.WriteString("\ndate ")
+		builder.WriteString(date)
+		builder.WriteString(": ")
+		builder.WriteString(strconv.Itoa(res[date]))
+	}
+	return builder.String()
+}
+
+func formatHourCounts(res map[string]int) string {
+	var builder strings.Builder
+	for hourInt := 0; hourInt < 24; hourInt++ {
+		hour := strconv.Itoa(hourInt)
+		builder.WriteString("\nhour ")
+		builder.WriteString(hour)
+		builder.WriteString(": ")
+		builder.WriteString(strconv.Itoa(res[hour]))
+	}
+	return builder.String()
+}
+
 func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 	if len(recv_list) == 0 {
-		task_query_database_count := func(args ...interface{}) (interface{}, error) {
+		taskQueryDatabaseCount := func(args ...interface{}) (interface{}, error) {
 			return query_database_count()
 		}
-		count := utils.Retry_task(task_query_database_count, Global.Globalsig_ss).(int)
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte("total data count: " + strconv.Itoa(count)))
-		safe_conn.Lock.Unlock()
+		count := utils.Retry_task(taskQueryDatabaseCount, Global.Globalsig_ss).(int)
+		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
 		return
 	}
-	if recv_list[0] == "date" && recv_list[1] != "all" && len(recv_list) == 2 {
-		if len(recv_list[1]) != 8 {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid date format"))
-			safe_conn.Lock.Unlock()
-			return
-		}
-		_, err := strconv.Atoi(recv_list[1])
-		if err != nil {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid date format"))
-			safe_conn.Lock.Unlock()
-			return
-		}
-		task_query_database_date_count := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_count(args[0].(string))
-		}
-		count := utils.Retry_task(task_query_database_date_count, Global.Globalsig_ss, recv_list[1]).(int)
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte("total data count: " + strconv.Itoa(count)))
-		safe_conn.Lock.Unlock()
-		return
-	}
-	if recv_list[0] == "date" && recv_list[1] == "all" && len(recv_list) == 2 {
-		task_query_database_date_count_all := func(args ...interface{}) (interface{}, error) {
+
+	if len(recv_list) == 2 && recv_list[0] == "date" && recv_list[1] == "all" {
+		taskQueryDatabaseDateCountAll := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_count_all()
 		}
-		res := utils.Retry_task(task_query_database_date_count_all, Global.Globalsig_ss).(map[string]int)
-		write_str := ""
-		var keys []string
-		for k := range res {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, date := range keys {
-			write_str += "\n" + "date " + date + ": " + strconv.Itoa(res[date])
-		}
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte(write_str))
-		safe_conn.Lock.Unlock()
+		res := utils.Retry_task(taskQueryDatabaseDateCountAll, Global.Globalsig_ss).(map[string]int)
+		writeSQLResponse(safe_conn, formatDateCounts(res))
 		return
 	}
-	if recv_list[0] == "hour" && recv_list[1] != "all" && len(recv_list) == 2 {
-		if len(recv_list[1]) > 2 {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid hour format"))
-			safe_conn.Lock.Unlock()
-			return
-		}
-		_, err := strconv.Atoi(recv_list[1])
+	if len(recv_list) == 2 && recv_list[0] == "date" {
+		date, err := validateCountDateArg(recv_list[1])
 		if err != nil {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid hour format"))
-			safe_conn.Lock.Unlock()
+			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
-		task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
+		taskQueryDatabaseDateCount := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_count(args[0].(string))
+		}
+		count := utils.Retry_task(taskQueryDatabaseDateCount, Global.Globalsig_ss, date).(int)
+		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
+		return
+	}
+
+	if len(recv_list) == 2 && recv_list[0] == "hour" && recv_list[1] == "all" {
+		res := query_database_hour_count_all()
+		writeSQLResponse(safe_conn, formatHourCounts(res))
+		return
+	}
+	if len(recv_list) == 2 && recv_list[0] == "hour" {
+		hour, err := validateCountHourArg(recv_list[1])
+		if err != nil {
+			writeSQLResponse(safe_conn, err.Error())
+			return
+		}
+		taskQueryDatabaseHourCount := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_count(args[0].(string))
 		}
-		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, recv_list[1]).(int)
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte("total data count: " + strconv.Itoa(count)))
-		safe_conn.Lock.Unlock()
+		count := utils.Retry_task(taskQueryDatabaseHourCount, Global.Globalsig_ss, hour).(int)
+		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
 		return
 	}
-	if recv_list[0] == "hour" && recv_list[1] == "all" && len(recv_list) == 2 {
-		res := query_database_hour_count_all()
-		write_str := ""
-		for hour_int := 0; hour_int < 24; hour_int++ {
-			write_str += "\n" + "hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)])
-		}
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte(write_str))
-		safe_conn.Lock.Unlock()
-		return
-	}
-	if recv_list[0] == "date" && recv_list[1] == "hour" && recv_list[2] == "all" && len(recv_list) == 4 {
-		if len(recv_list[3]) != 8 {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid date format"))
-			safe_conn.Lock.Unlock()
-			return
-		}
-		_, err := strconv.Atoi(recv_list[3])
+
+	if len(recv_list) == 4 && recv_list[0] == "date" && recv_list[2] == "hour" && recv_list[3] == "all" {
+		date, err := validateCountDateArg(recv_list[1])
 		if err != nil {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid date format"))
-			safe_conn.Lock.Unlock()
+			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
-		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
+		taskQueryDatabaseDateHourCountAll := func(args ...interface{}) (interface{}, error) {
 			return query_database_date_hour_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_hour_count_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
-		write_str := ""
-		for hour_int := 0; hour_int < 24; hour_int++ {
-			write_str += "\n" + "hour " + strconv.Itoa(hour_int) + ": " + strconv.Itoa(res[strconv.Itoa(hour_int)])
-		}
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte(write_str))
-		safe_conn.Lock.Unlock()
+		res := utils.Retry_task(taskQueryDatabaseDateHourCountAll, Global.Globalsig_ss, date).(map[string]int)
+		writeSQLResponse(safe_conn, formatHourCounts(res))
 		return
 	}
-	if recv_list[0] == "hour" && recv_list[1] == "date" && recv_list[2] == "all" && len(recv_list) == 4 {
-		if len(recv_list[3]) > 2 {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid hour format"))
-			safe_conn.Lock.Unlock()
-			return
-		}
-		_, err := strconv.Atoi(recv_list[3])
+
+	if len(recv_list) == 4 && recv_list[0] == "hour" && recv_list[2] == "date" && recv_list[3] == "all" {
+		hour, err := validateCountHourArg(recv_list[1])
 		if err != nil {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("invalid hour format"))
-			safe_conn.Lock.Unlock()
+			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
-		task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
-			return strconv.Atoi(args[0].(string))
-		}
-		task_query_database_hour_date_all := func(args ...interface{}) (interface{}, error) {
+		taskQueryDatabaseHourDateCountAll := func(args ...interface{}) (interface{}, error) {
 			return query_database_hour_date_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_hour_date_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
-		write_str := ""
-		var keys []string
-		for k := range res {
-			keys = append(keys, k)
-		}
-		var keys_int []int
-		for _, k := range keys {
-			keys_int = append(keys_int, utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, k).(int))
-		}
-		sort.Ints(keys_int)
-		for i, k := range keys_int {
-			keys[i] = strconv.Itoa(k)
-		}
-		for _, date := range keys {
-			write_str += "\n" + "date " + date + ": " + strconv.Itoa(res[date])
-		}
-		safe_conn.Lock.Lock()
-		safe_conn.Conn.Write([]byte(write_str))
-		safe_conn.Lock.Unlock()
+		res := utils.Retry_task(taskQueryDatabaseHourDateCountAll, Global.Globalsig_ss, hour).(map[string]int)
+		writeSQLResponse(safe_conn, formatDateCounts(res))
 		return
 	}
-	safe_conn.Lock.Lock()
-	safe_conn.Conn.Write([]byte("invalid sql count command"))
-	safe_conn.Lock.Unlock()
+
+	if len(recv_list) == 4 && recv_list[0] == "date" && recv_list[2] == "hour" {
+		date, dateErr := validateCountDateArg(recv_list[1])
+		if dateErr != nil {
+			writeSQLResponse(safe_conn, dateErr.Error())
+			return
+		}
+		hour, hourErr := validateCountHourArg(recv_list[3])
+		if hourErr != nil {
+			writeSQLResponse(safe_conn, hourErr.Error())
+			return
+		}
+		taskQueryDatabaseDateHourCount := func(args ...interface{}) (interface{}, error) {
+			return query_database_date_hour_count(args[0].(string), args[1].(string))
+		}
+		count := utils.Retry_task(taskQueryDatabaseDateHourCount, Global.Globalsig_ss, date, hour).(int)
+		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
+		return
+	}
+
+	writeSQLResponse(safe_conn, "invalid sql count command")
 }
 
 func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string, recv string) {
@@ -915,8 +942,8 @@ func execute_sql_dump(safe_conn utils.Safe_connection, recv_list []string, recv 
 }
 
 func Execute_sql(safe_conn utils.Safe_connection, recv string) {
-	recv_list := strings.Split(recv, " ")
-	if len(recv_list) == 1 { // important!
+	recv_list := strings.Fields(recv)
+	if len(recv_list) < 2 { // important!
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("invalid sql command"))
 		safe_conn.Lock.Unlock()

@@ -24,6 +24,7 @@ const (
 type imageTransformTask struct {
 	sourcePath string
 	targetPath string
+	workerID   int
 }
 
 type imageTransformResult struct {
@@ -46,6 +47,16 @@ type CopyResult struct {
 	Copied   int
 	Skipped  int
 	Failed   int
+}
+
+type ProgressConfig struct {
+	EveryImages   int
+	EveryInterval time.Duration
+}
+
+var defaultProgressConfig = ProgressConfig{
+	EveryImages:   25,
+	EveryInterval: time.Second,
 }
 
 func (r CopyResult) Summary() string {
@@ -129,6 +140,26 @@ func CountImages(db *sql.DB, imgPath string, tr TimeRange) (CountResult, error) 
 }
 
 func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, error) {
+	return copyImages(db, imgPath, dest, tr, nil, defaultProgressConfig)
+}
+
+func CopyImagesWithProgress(
+	db *sql.DB,
+	imgPath, dest string,
+	tr TimeRange,
+	progress chan<- ProgressUpdate,
+) (CopyResult, error) {
+	defer closeProgressChannel(progress)
+	return copyImages(db, imgPath, dest, tr, progress, defaultProgressConfig)
+}
+
+func copyImages(
+	db *sql.DB,
+	imgPath, dest string,
+	tr TimeRange,
+	progress chan<- ProgressUpdate,
+	progressConfig ProgressConfig,
+) (CopyResult, error) {
 	result := CopyResult{}
 
 	archived, paths, missing, err := collectExistingFiles(db, imgPath, tr)
@@ -154,7 +185,13 @@ func CopyImages(db *sql.DB, imgPath, dest string, tr TimeRange) (CopyResult, err
 	result.Skipped += skipped
 	result.Failed += failed
 
-	copied, convertFailed := processImageTransformQueue(transformTasks, defaultWorkers, defaultJPEGQuality)
+	copied, convertFailed := processImageTransformQueue(
+		transformTasks,
+		defaultWorkers,
+		defaultJPEGQuality,
+		progress,
+		progressConfig,
+	)
 	result.Copied += copied
 	result.Failed += convertFailed
 
@@ -187,21 +224,31 @@ func buildImageTransformTasks(paths []string, destPath string) ([]imageTransform
 	return tasks, skipped, failed
 }
 
-func processImageTransformQueue(tasks []imageTransformTask, workerCount, jpegQuality int) (int, int) {
+func processImageTransformQueue(
+	tasks []imageTransformTask,
+	workerCount,
+	jpegQuality int,
+	progress chan<- ProgressUpdate,
+	progressConfig ProgressConfig,
+) (int, int) {
 	if len(tasks) == 0 {
 		return 0, 0
 	}
 
 	workerTotal := normalizeWorkerCount(workerCount)
+	progressConfig = normalizeProgressConfig(progressConfig)
 	taskQueue := make(chan imageTransformTask, workerTotal)
 	resultQueue := make(chan imageTransformResult, len(tasks))
+	stats := NewWorkerStats(workerTotal)
+	defer stats.Close()
 
 	var workers sync.WaitGroup
 	workers.Add(workerTotal)
 	for i := 0; i < workerTotal; i++ {
+		workerID := i
 		go func() {
 			defer workers.Done()
-			runImageTransformWorker(taskQueue, resultQueue, jpegQuality)
+			runImageTransformWorker(workerID, taskQueue, resultQueue, jpegQuality, stats)
 		}()
 	}
 
@@ -219,24 +266,87 @@ func processImageTransformQueue(tasks []imageTransformTask, workerCount, jpegQua
 
 	copied := 0
 	failed := 0
-	for transformResult := range resultQueue {
-		if transformResult.err != nil {
-			failed++
-			continue
+	completedSinceUpdate := 0
+
+	sendProgress := func() {
+		if progress == nil {
+			return
 		}
-		copied++
+		if copied == 0 {
+			return
+		}
+		update := ProgressUpdate{
+			WorkerCounts: stats.GetWorkerCounts(),
+			Timestamp:    time.Now(),
+		}
+		select {
+		case progress <- update:
+		default:
+		}
 	}
-	return copied, failed
+
+	var ticker *time.Ticker
+	var tickerChan <-chan time.Time
+	if progress != nil && progressConfig.EveryInterval > 0 {
+		ticker = time.NewTicker(progressConfig.EveryInterval)
+		tickerChan = ticker.C
+		defer ticker.Stop()
+	}
+
+	for {
+		select {
+		case transformResult, ok := <-resultQueue:
+			if !ok {
+				sendProgress()
+				return copied, failed
+			}
+			if transformResult.err != nil {
+				failed++
+				continue
+			}
+			copied++
+			completedSinceUpdate++
+			if progress != nil && progressConfig.EveryImages > 0 && completedSinceUpdate >= progressConfig.EveryImages {
+				sendProgress()
+				completedSinceUpdate = 0
+			}
+		case <-tickerChan:
+			sendProgress()
+			completedSinceUpdate = 0
+		}
+	}
 }
 
 func runImageTransformWorker(
+	workerID int,
 	taskQueue <-chan imageTransformTask,
 	resultQueue chan<- imageTransformResult,
 	jpegQuality int,
+	stats *WorkerStats,
 ) {
 	for task := range taskQueue {
+		task.workerID = workerID
 		err := convertImageToJPEG(task.sourcePath, task.targetPath, jpegQuality)
+		if err == nil && stats != nil {
+			stats.Report(task.workerID)
+		}
 		resultQueue <- imageTransformResult{err: err}
+	}
+}
+
+func normalizeProgressConfig(config ProgressConfig) ProgressConfig {
+	if config.EveryImages < 1 {
+		config.EveryImages = defaultProgressConfig.EveryImages
+	}
+	if config.EveryInterval <= 0 {
+		config.EveryInterval = defaultProgressConfig.EveryInterval
+	}
+	return config
+}
+
+func closeProgressChannel(progress chan<- ProgressUpdate) {
+	if progress != nil {
+		close(progress)
 	}
 }
 

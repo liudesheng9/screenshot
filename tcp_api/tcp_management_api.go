@@ -126,7 +126,10 @@ func execute_config_operation(safe_conn utils.Safe_connection, recv_list []strin
 				fmt.Println("unlocked : ", unlocked)
 				if unlocked {
 					library_manager.Remove_lock(file_name_list)
-					library_manager.Insert_library(file_path_list)
+					err := library_manager.Insert_library(file_path_list)
+					if err != nil {
+						fmt.Printf("Insert_library error during cache_path change: %v\n", err)
+					}
 					break
 				} else {
 					continue
@@ -273,7 +276,18 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 		execute_config_operation(safe_conn, recv_list[2:])
 		return
 	}
+	if len(recv_list) == 3 && recv_list[1] == "store" && recv_list[2] == "errors" {
+		execute_store_errors(safe_conn)
+		return
+	}
 	safe_conn.Lock.Lock()
 	safe_conn.Conn.Write([]byte("invalid man command"))
+	safe_conn.Lock.Unlock()
+}
+
+func execute_store_errors(safe_conn utils.Safe_connection) {
+	errorsText := Global.GetStorageErrors()
+	safe_conn.Lock.Lock()
+	safe_conn.Conn.Write([]byte(errorsText))
 	safe_conn.Lock.Unlock()
 }

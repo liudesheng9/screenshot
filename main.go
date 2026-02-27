@@ -254,10 +254,11 @@ func thread_manage_library() {
 					fmt.Println("unlocked : ", unlocked)
 					if unlocked {
 						library_manager.Remove_lock(file_name_list)
-						library_manager.Insert_library(file_path_list)
+						err := library_manager.Insert_library(file_path_list)
+						if err != nil {
+							fmt.Printf("Insert_library error: %v\n", err)
+						}
 						break
-					} else {
-						continue
 					}
 				}
 			}
@@ -367,6 +368,10 @@ func init_program() {
 	Global.Global_screenshot_status_Mutex = new(sync.Mutex)
 
 	Global.Global_store = 0
+
+	// Initialize storage error tracking
+	Global.Global_storage_errors = make([]Global.StorageError, 0, Global.MaxStorageErrors)
+	Global.Global_storage_errors_mutex = new(sync.Mutex)
 
 }
 

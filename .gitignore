@@ -24,3 +24,7 @@ config.toml
 1.db
 2.db
 img_dump/*
+
+openspec/*
+.opencode/*
+.claude/*

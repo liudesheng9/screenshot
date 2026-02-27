@@ -1,6 +1,7 @@
 package image_export
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"image"
@@ -15,16 +16,23 @@ import (
 )
 
 const (
-	defaultDumpDir     = "./img_dump"
-	defaultJPEGQuality = 85
-	defaultWorkers     = 10
-	jpegFileExt        = ".jpg"
+	defaultDumpDir           = "./img_dump"
+	defaultJPEGQuality       = 85
+	defaultIOWorkers         = 2
+	defaultProcessingWorkers = 10
+	bufferedQueueCapacity    = 10
+	jpegFileExt              = ".jpg"
 )
+
+type BufferedImage struct {
+	SourcePath string
+	TargetPath string
+	Data       []byte
+}
 
 type imageTransformTask struct {
 	sourcePath string
 	targetPath string
-	workerID   int
 }
 
 type imageTransformResult struct {
@@ -55,7 +63,7 @@ type ProgressConfig struct {
 }
 
 var defaultProgressConfig = ProgressConfig{
-	EveryImages:   25,
+	EveryImages:   5,
 	EveryInterval: time.Second,
 }
 
@@ -187,7 +195,7 @@ func copyImages(
 
 	copied, convertFailed := processImageTransformQueue(
 		transformTasks,
-		defaultWorkers,
+		defaultProcessingWorkers,
 		defaultJPEGQuality,
 		progress,
 		progressConfig,
@@ -235,32 +243,50 @@ func processImageTransformQueue(
 		return 0, 0
 	}
 
-	workerTotal := normalizeWorkerCount(workerCount)
+	ioWorkerTotal := normalizeWorkerCount(defaultIOWorkers)
+	processingWorkerTotal := normalizeWorkerCount(workerCount)
 	progressConfig = normalizeProgressConfig(progressConfig)
-	taskQueue := make(chan imageTransformTask, workerTotal)
+	imageTransformTaskQueue := make(chan imageTransformTask, len(tasks))
+	bufferedImageQueue := make(chan *BufferedImage, bufferedQueueCapacity)
 	resultQueue := make(chan imageTransformResult, len(tasks))
-	stats := NewWorkerStats(workerTotal)
+	stats := NewPipelineWorkerStats(ioWorkerTotal, processingWorkerTotal)
 	defer stats.Close()
 
-	var workers sync.WaitGroup
-	workers.Add(workerTotal)
-	for i := 0; i < workerTotal; i++ {
+	var ioWorkers sync.WaitGroup
+	ioWorkers.Add(ioWorkerTotal)
+	for i := 0; i < ioWorkerTotal; i++ {
 		workerID := i
 		go func() {
-			defer workers.Done()
-			runImageTransformWorker(workerID, taskQueue, resultQueue, jpegQuality, stats)
+			defer ioWorkers.Done()
+			runIOWorker(workerID, imageTransformTaskQueue, bufferedImageQueue, resultQueue, stats)
+		}()
+	}
+
+	var processingWorkers sync.WaitGroup
+	processingWorkers.Add(processingWorkerTotal)
+	for i := 0; i < processingWorkerTotal; i++ {
+		workerID := i
+		go func() {
+			defer processingWorkers.Done()
+			runImageTransformWorker(workerID, bufferedImageQueue, resultQueue, jpegQuality, stats)
 		}()
 	}
 
 	go func() {
 		for _, task := range tasks {
-			taskQueue <- task
+			imageTransformTaskQueue <- task
 		}
-		close(taskQueue)
+		close(imageTransformTaskQueue)
 	}()
 
 	go func() {
-		workers.Wait()
+		ioWorkers.Wait()
+		close(bufferedImageQueue)
+	}()
+
+	go func() {
+		ioWorkers.Wait()
+		processingWorkers.Wait()
 		close(resultQueue)
 	}()
 
@@ -272,11 +298,12 @@ func processImageTransformQueue(
 		if progress == nil {
 			return
 		}
-		if copied == 0 {
-			return
-		}
 		update := ProgressUpdate{
 			WorkerCounts: stats.GetWorkerCounts(),
+			WorkerTasks:  stats.GetWorkerTasks(),
+			WorkerRefs:   stats.GetWorkerRefs(),
+			Total:        copied,
+			Target:       len(tasks),
 			Timestamp:    time.Now(),
 		}
 		select {
@@ -319,18 +346,56 @@ func processImageTransformQueue(
 
 func runImageTransformWorker(
 	workerID int,
-	taskQueue <-chan imageTransformTask,
+	bufferedImageQueue <-chan *BufferedImage,
 	resultQueue chan<- imageTransformResult,
 	jpegQuality int,
 	stats *WorkerStats,
 ) {
-	for task := range taskQueue {
-		task.workerID = workerID
-		err := convertImageToJPEG(task.sourcePath, task.targetPath, jpegQuality)
+	internalWorkerID := processingWorkerInternalID(workerID)
+	for bufferedImage := range bufferedImageQueue {
+		err := convertImageToJPEG(bufferedImage, jpegQuality, internalWorkerID, stats)
+		if bufferedImage != nil {
+			bufferedImage.Data = nil
+		}
 		if err == nil && stats != nil {
-			stats.Report(task.workerID)
+			stats.Report(internalWorkerID)
 		}
 		resultQueue <- imageTransformResult{err: err}
+	}
+}
+
+func runIOWorker(
+	workerID int,
+	taskQueue <-chan imageTransformTask,
+	bufferedImageQueue chan<- *BufferedImage,
+	resultQueue chan<- imageTransformResult,
+	stats *WorkerStats,
+) {
+	internalWorkerID := ioWorkerInternalID(workerID)
+	for task := range taskQueue {
+		if stats != nil {
+			stats.ReportStage(internalWorkerID, filepath.Base(task.sourcePath), StageReading)
+		}
+
+		data, err := os.ReadFile(task.sourcePath)
+		if err != nil {
+			if stats != nil {
+				stats.ClearWorkerTask(internalWorkerID)
+			}
+			resultQueue <- imageTransformResult{err: fmt.Errorf("read source image %s: %w", task.sourcePath, err)}
+			continue
+		}
+
+		bufferedImageQueue <- &BufferedImage{
+			SourcePath: task.sourcePath,
+			TargetPath: task.targetPath,
+			Data:       data,
+		}
+
+		if stats != nil {
+			stats.Report(internalWorkerID)
+			stats.ClearWorkerTask(internalWorkerID)
+		}
 	}
 }
 
@@ -357,183 +422,40 @@ func normalizeWorkerCount(workerCount int) int {
 	return workerCount
 }
 
-func queryMatchingFileNames(db *sql.DB, tr TimeRange) ([]string, error) {
-	if db == nil {
-		return nil, fmt.Errorf("database is nil")
-	}
-	query := `
-		SELECT DISTINCT file_name
-		FROM screenshots
-		WHERE file_name IS NOT NULL
-		  AND TRIM(file_name) != ''
-		  AND year = ?
-		  AND month = ?
-		  AND day = ?
-		  AND (hour * 60 + minute) BETWEEN ? AND ?
-		ORDER BY file_name
-	`
-	rows, err := db.Query(query, tr.Year, tr.Month, tr.Day, tr.StartMinute, tr.EndMinute)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	seen := make(map[string]struct{})
-	names := make([]string, 0)
-	for rows.Next() {
-		var name sql.NullString
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		if !name.Valid || strings.TrimSpace(name.String) == "" {
-			continue
-		}
-		if _, ok := seen[name.String]; ok {
-			continue
-		}
-		seen[name.String] = struct{}{}
-		names = append(names, name.String)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return names, nil
-}
-
-func queryArchiveCount(db *sql.DB, tr TimeRange) (int, error) {
-	if db == nil {
-		return 0, fmt.Errorf("database is nil")
-	}
-	query := `
-		SELECT COUNT(DISTINCT file_name)
-		FROM screenshots
-		WHERE file_name IS NOT NULL
-		  AND TRIM(file_name) != ''
-		  AND year = ?
-		  AND month = ?
-		  AND day = ?
-		  AND (hour * 60 + minute) BETWEEN ? AND ?
-	`
-	var count int
-	err := db.QueryRow(query, tr.Year, tr.Month, tr.Day, tr.StartMinute, tr.EndMinute).Scan(&count)
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
-func collectExistingFiles(db *sql.DB, imgPath string, tr TimeRange) (int, []string, int, error) {
-	if err := validateImgPath(imgPath); err != nil {
-		return 0, nil, 0, err
-	}
-	archived, err := queryArchiveCount(db, tr)
-	if err != nil {
-		return 0, nil, 0, err
-	}
-	names, err := queryMatchingFileNames(db, tr)
-	if err != nil {
-		return archived, nil, 0, err
+func convertImageToJPEG(bufferedImage *BufferedImage, quality int, workerID int, reporter StageReporter) error {
+	if bufferedImage == nil {
+		return fmt.Errorf("buffered image is nil")
 	}
 
-	existing := make([]string, 0, len(names))
-	missing := 0
-	for _, name := range names {
-		full, err := resolvePathWithinRoot(imgPath, name)
-		if err != nil {
-			return archived, existing, missing, err
-		}
-		info, statErr := os.Stat(full)
-		if statErr == nil {
-			if info.IsDir() {
-				missing++
-				continue
-			}
-			existing = append(existing, full)
-			continue
-		}
-		if os.IsNotExist(statErr) {
-			missing++
-			continue
-		}
-		return archived, existing, missing, fmt.Errorf("stat %s: %w", full, statErr)
+	srcPath := bufferedImage.SourcePath
+	destPath := bufferedImage.TargetPath
+	if strings.TrimSpace(srcPath) == "" {
+		return fmt.Errorf("source image path is empty")
 	}
-	return archived, existing, missing, nil
-}
-
-func validateImgPath(imgPath string) error {
-	if strings.TrimSpace(imgPath) == "" {
-		return fmt.Errorf("img_path is empty")
-	}
-	info, err := os.Stat(imgPath)
-	if err != nil {
-		return fmt.Errorf("img_path not accessible: %w", err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("img_path is not a directory")
-	}
-	return nil
-}
-
-func validateDestPath(imgPath, destPath string) error {
 	if strings.TrimSpace(destPath) == "" {
-		return fmt.Errorf("dest path is empty")
+		return fmt.Errorf("target image path is empty")
 	}
-	if isPathRoot(destPath) {
-		return fmt.Errorf("dest path cannot be root")
+	if len(bufferedImage.Data) == 0 {
+		return fmt.Errorf("source image %s has no data", srcPath)
 	}
 
-	absDest, err := filepath.Abs(destPath)
-	if err != nil {
-		return fmt.Errorf("dest path invalid: %w", err)
-	}
-	absImg, err := filepath.Abs(imgPath)
-	if err != nil {
-		return fmt.Errorf("img path invalid: %w", err)
-	}
-	if absDest == absImg {
-		return fmt.Errorf("dest path cannot be the same as img_path")
-	}
-	if rel, err := filepath.Rel(absImg, absDest); err == nil {
-		if rel == "." || !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && rel != ".." {
-			return fmt.Errorf("dest path cannot be inside img_path")
-		}
-	}
-	return nil
-}
-
-func resolveDestPath(dest string) string {
-	destPath := strings.TrimSpace(dest)
-	if destPath == "" {
-		destPath = defaultDumpDir
-	}
-	return filepath.Clean(destPath)
-}
-
-func toJPEGFileName(name string) (string, error) {
-	baseName := strings.TrimSpace(name)
-	if baseName == "" {
-		return "", fmt.Errorf("empty file name")
-	}
-	ext := filepath.Ext(baseName)
-	stem := strings.TrimSpace(strings.TrimSuffix(baseName, ext))
-	if stem == "" {
-		return "", fmt.Errorf("invalid file name: %s", name)
-	}
-	return stem + jpegFileExt, nil
-}
-
-func convertImageToJPEG(srcPath, destPath string, quality int) error {
 	if quality < 1 || quality > 100 {
 		quality = defaultJPEGQuality
 	}
 
-	srcFile, err := os.Open(srcPath)
-	if err != nil {
-		return fmt.Errorf("open source image %s: %w", srcPath, err)
+	if reporter != nil {
+		defer reporter.ClearWorkerTask(workerID)
 	}
-	defer srcFile.Close()
 
-	srcImage, _, err := image.Decode(srcFile)
+	reportStage := func(stage Stage) {
+		if reporter == nil {
+			return
+		}
+		reporter.ReportStage(workerID, filepath.Base(srcPath), stage)
+	}
+
+	reportStage(StageDecode)
+	srcImage, _, err := image.Decode(bytes.NewReader(bufferedImage.Data))
 	if err != nil {
 		return fmt.Errorf("decode source image %s: %w", srcPath, err)
 	}
@@ -554,9 +476,12 @@ func convertImageToJPEG(srcPath, destPath string, quality int) error {
 		}
 	}()
 
+	reportStage(StageEncode)
 	if err := jpeg.Encode(tmpFile, srcImage, &jpeg.Options{Quality: quality}); err != nil {
 		return fmt.Errorf("encode jpeg %s: %w", destPath, err)
 	}
+	reportStage(StageWrite)
+	reportStage(StageSync)
 	if err := tmpFile.Sync(); err != nil {
 		return fmt.Errorf("sync jpeg %s: %w", destPath, err)
 	}
@@ -571,83 +496,4 @@ func convertImageToJPEG(srcPath, destPath string, quality int) error {
 		return fmt.Errorf("move jpeg into place %s: %w", destPath, err)
 	}
 	return nil
-}
-
-func resolvePathWithinRoot(root, child string) (string, error) {
-	cleanChild := filepath.Clean(strings.TrimSpace(child))
-	if cleanChild == "." || cleanChild == "" {
-		return "", fmt.Errorf("invalid file name: %q", child)
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("invalid root path: %w", err)
-	}
-	full := filepath.Join(absRoot, cleanChild)
-	absFull, err := filepath.Abs(full)
-	if err != nil {
-		return "", fmt.Errorf("invalid file path %q: %w", child, err)
-	}
-	rel, err := filepath.Rel(absRoot, absFull)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve file path %q: %w", child, err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("file path escapes image directory: %q", child)
-	}
-	return absFull, nil
-}
-
-func clearDirectoryContents(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		target := filepath.Join(dir, entry.Name())
-		if err := os.RemoveAll(target); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func isPathRoot(p string) bool {
-	clean := filepath.Clean(p)
-	vol := filepath.VolumeName(clean)
-	if vol != "" {
-		rest := strings.TrimPrefix(clean, vol)
-		rest = strings.TrimPrefix(rest, string(os.PathSeparator))
-		return rest == ""
-	}
-	return clean == string(os.PathSeparator) || clean == "."
-}
-
-func parseHHMM(s string) (int, int, error) {
-	if len(s) != 4 || !isDigits(s) {
-		return 0, 0, fmt.Errorf("expected HHMM")
-	}
-	hour, _ := strconv.Atoi(s[:2])
-	minute, _ := strconv.Atoi(s[2:4])
-	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-		return 0, 0, fmt.Errorf("invalid hour/minute")
-	}
-	return hour, minute, nil
-}
-
-func isDigits(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func isValidDate(year, month, day int) bool {
-	if month < 1 || month > 12 || day < 1 || day > 31 {
-		return false
-	}
-	t := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
-	return t.Year() == year && int(t.Month()) == month && t.Day() == day
 }

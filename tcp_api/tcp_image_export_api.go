@@ -2,6 +2,7 @@ package tcp_api
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -16,9 +17,19 @@ const (
 	imgCopyStreamFlag   = "--stream"
 )
 
-type ProgressUpdate struct {
-	WorkerCounts map[int]int
-	Timestamp    time.Time
+type WorkerStatus struct {
+	WorkerID    int
+	WorkerLabel string
+	Count       int
+	Filename    string
+	Stage       string
+	Elapsed     string
+}
+
+type ProgressUpdateV2 struct {
+	Total          int
+	Target         int
+	WorkerStatuses []WorkerStatus
 }
 
 type copyOutcome struct {
@@ -112,6 +123,8 @@ func streamImgCopy(
 	dest string,
 	destOut string,
 ) {
+	enableNoDelay(safe_conn.Conn)
+
 	progressChan := make(chan image_export.ProgressUpdate, 64)
 	resultChan := make(chan copyOutcome, 1)
 
@@ -135,7 +148,7 @@ func streamImgCopy(
 				progressOpen = false
 				continue
 			}
-			if err := writeImgLine(safe_conn, formatProgressLine(toProgressUpdate(update))); err != nil {
+			if err := writeImgLine(safe_conn, formatProgressLineV2(toProgressUpdateV2(update))); err != nil {
 				return
 			}
 		case outcome := <-resultChan:
@@ -158,29 +171,136 @@ func resolveDestOutput(dest string) string {
 	return destOut
 }
 
-func toProgressUpdate(update image_export.ProgressUpdate) ProgressUpdate {
-	return ProgressUpdate{
-		WorkerCounts: update.WorkerCounts,
-		Timestamp:    update.Timestamp,
+func toProgressUpdateV2(update image_export.ProgressUpdate) ProgressUpdateV2 {
+	workerIDs := make([]int, 0, len(update.WorkerCounts)+len(update.WorkerTasks)+len(update.WorkerRefs))
+	seenWorkerID := make(map[int]struct{}, len(update.WorkerCounts)+len(update.WorkerTasks)+len(update.WorkerRefs))
+	appendWorkerID := func(workerID int) {
+		if _, seen := seenWorkerID[workerID]; seen {
+			return
+		}
+		seenWorkerID[workerID] = struct{}{}
+		workerIDs = append(workerIDs, workerID)
+	}
+	for workerID := range update.WorkerCounts {
+		appendWorkerID(workerID)
+	}
+	for workerID := range update.WorkerTasks {
+		appendWorkerID(workerID)
+	}
+	for workerID := range update.WorkerRefs {
+		appendWorkerID(workerID)
+	}
+
+	sort.Slice(workerIDs, func(i, j int) bool {
+		leftRef := resolveWorkerRef(update, workerIDs[i])
+		rightRef := resolveWorkerRef(update, workerIDs[j])
+		leftRank := workerTypeRank(leftRef.WorkerType)
+		rightRank := workerTypeRank(rightRef.WorkerType)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if leftRef.WorkerID != rightRef.WorkerID {
+			return leftRef.WorkerID < rightRef.WorkerID
+		}
+		return workerIDs[i] < workerIDs[j]
+	})
+
+	statuses := make([]WorkerStatus, 0, len(workerIDs))
+	for _, internalWorkerID := range workerIDs {
+		workerRef := resolveWorkerRef(update, internalWorkerID)
+		status := WorkerStatus{
+			WorkerID:    workerRef.WorkerID,
+			WorkerLabel: workerRef.Label(),
+			Count:       update.WorkerCounts[internalWorkerID],
+			Filename:    "-",
+			Stage:       "idle",
+			Elapsed:     "-",
+		}
+
+		if workerTask, ok := update.WorkerTasks[internalWorkerID]; ok && workerTask != nil {
+			if workerTask.Filename != "" {
+				status.Filename = workerTask.Filename
+			}
+			if workerTask.Stage != "" {
+				status.Stage = string(workerTask.Stage)
+			}
+			status.Elapsed = formatElapsedSeconds(update.Timestamp, workerTask.StartTime)
+		}
+
+		statuses = append(statuses, status)
+	}
+
+	return ProgressUpdateV2{
+		Total:          update.Total,
+		Target:         update.Target,
+		WorkerStatuses: statuses,
 	}
 }
 
-func formatProgressLine(update ProgressUpdate) string {
-	workerIDs := make([]int, 0, len(update.WorkerCounts))
-	total := 0
-	for workerID, count := range update.WorkerCounts {
-		workerIDs = append(workerIDs, workerID)
-		total += count
+func resolveWorkerRef(update image_export.ProgressUpdate, workerID int) image_export.WorkerRef {
+	if ref, ok := update.WorkerRefs[workerID]; ok {
+		return ref
 	}
-	sort.Ints(workerIDs)
+	if task, ok := update.WorkerTasks[workerID]; ok && task != nil {
+		return image_export.WorkerRef{WorkerType: task.WorkerType, WorkerID: workerID}
+	}
+	return image_export.InferWorkerRef(workerID)
+}
 
-	parts := make([]string, 0, len(workerIDs)+2)
-	parts = append(parts, "PROGRESS")
-	for _, workerID := range workerIDs {
-		parts = append(parts, fmt.Sprintf("W%d:%d", workerID, update.WorkerCounts[workerID]))
+func workerTypeRank(workerType image_export.WorkerType) int {
+	switch workerType {
+	case image_export.WorkerTypeIO:
+		return 0
+	case image_export.WorkerTypePROC:
+		return 1
+	default:
+		return 2
 	}
-	parts = append(parts, fmt.Sprintf("T:%d", total))
+}
+
+func formatProgressLineV2(update ProgressUpdateV2) string {
+	parts := make([]string, 0, len(update.WorkerStatuses)+2)
+	parts = append(parts, "PROGRESS_V2")
+	parts = append(parts, fmt.Sprintf("T:%d/%d", update.Total, update.Target))
+	for _, status := range update.WorkerStatuses {
+		workerLabel := strings.TrimSpace(status.WorkerLabel)
+		if workerLabel == "" {
+			workerLabel = fmt.Sprintf("W%d", status.WorkerID)
+		}
+		parts = append(parts, fmt.Sprintf(
+			"%s:%d:%s:%s:%s",
+			normalizeProgressField(workerLabel, fmt.Sprintf("W%d", status.WorkerID)),
+			status.Count,
+			normalizeProgressField(status.Filename, "-"),
+			normalizeProgressField(status.Stage, "idle"),
+			normalizeProgressField(status.Elapsed, "-"),
+		))
+	}
 	return strings.Join(parts, " ")
+}
+
+func normalizeProgressField(value, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback
+	}
+	replacer := strings.NewReplacer(" ", "_", ":", "_")
+	return replacer.Replace(trimmed)
+}
+
+func formatElapsedSeconds(now, start time.Time) string {
+	if start.IsZero() {
+		return "-"
+	}
+	elapsed := now.Sub(start)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	seconds := elapsed.Seconds()
+	if seconds < 10 {
+		return fmt.Sprintf("%.1f", seconds)
+	}
+	return fmt.Sprintf("%.0f", seconds)
 }
 
 func formatDoneLine(result image_export.CopyResult, destOut string) string {
@@ -203,4 +323,12 @@ func writeImgResponse(safe_conn utils.Safe_connection, msg string) error {
 	defer safe_conn.Lock.Unlock()
 	_, err := safe_conn.Conn.Write([]byte(msg))
 	return err
+}
+
+func enableNoDelay(conn net.Conn) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tcpConn.SetNoDelay(true)
 }

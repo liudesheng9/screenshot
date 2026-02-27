@@ -18,6 +18,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"screenshot_server/Global"
+	"screenshot_server/image_export"
 	"screenshot_server/utils"
 )
 
@@ -51,6 +52,8 @@ func TestExecuteImgCopyStreamingSendsProgressAndDone(t *testing.T) {
 
 	reader := bufio.NewReader(clientConn)
 	progressCount := 0
+	seenIOWorkerLabel := false
+	seenProcessingWorkerLabel := false
 	doneLine := ""
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
@@ -64,7 +67,19 @@ func TestExecuteImgCopyStreamingSendsProgressAndDone(t *testing.T) {
 		}
 
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "PROGRESS ") {
+		if strings.HasPrefix(line, "PROGRESS_V2 ") {
+			if !strings.Contains(line, " T:") {
+				t.Fatalf("expected progress line to include totals: %s", line)
+			}
+			if strings.Contains(line, "IO-W") {
+				seenIOWorkerLabel = true
+			}
+			if strings.Contains(line, "PROC-W") {
+				seenProcessingWorkerLabel = true
+			}
+			if !strings.Contains(line, "IO-W") && !strings.Contains(line, "PROC-W") {
+				t.Fatalf("expected progress line to include typed worker labels: %s", line)
+			}
 			progressCount++
 			continue
 		}
@@ -78,7 +93,13 @@ func TestExecuteImgCopyStreamingSendsProgressAndDone(t *testing.T) {
 	}
 
 	if progressCount == 0 {
-		t.Fatalf("expected at least one PROGRESS line")
+		t.Fatalf("expected at least one PROGRESS_V2 line")
+	}
+	if !seenIOWorkerLabel {
+		t.Fatalf("expected stream to include IO worker labels")
+	}
+	if !seenProcessingWorkerLabel {
+		t.Fatalf("expected stream to include processing worker labels")
 	}
 	if doneLine == "" {
 		t.Fatalf("expected DONE line")
@@ -93,6 +114,69 @@ func TestExecuteImgCopyStreamingSendsProgressAndDone(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timeout waiting for Execute_img completion")
+	}
+}
+
+func TestFormatProgressLineV2OutputFormat(t *testing.T) {
+	update := ProgressUpdateV2{
+		Total:  3,
+		Target: 10,
+		WorkerStatuses: []WorkerStatus{
+			{WorkerID: 0, WorkerLabel: "IO-W0", Count: 2, Filename: "img_00.png", Stage: "reading", Elapsed: "1.2"},
+			{WorkerID: 3, WorkerLabel: "PROC-W3", Count: 1, Filename: "-", Stage: "idle", Elapsed: "-"},
+		},
+	}
+
+	line := formatProgressLineV2(update)
+	for _, token := range []string{
+		"PROGRESS_V2",
+		"T:3/10",
+		"IO-W0:2:img_00.png:reading:1.2",
+		"PROC-W3:1:-:idle:-",
+	} {
+		if !strings.Contains(line, token) {
+			t.Fatalf("expected token %q in progress line: %s", token, line)
+		}
+	}
+}
+
+func TestFormatProgressLineV2SupportsTypedWorkerRefs(t *testing.T) {
+	update := image_export.ProgressUpdate{
+		WorkerCounts: map[int]int{0: 1, 1000: 2},
+		WorkerTasks: map[int]*image_export.WorkerTask{
+			0:    {WorkerType: image_export.WorkerTypeIO, Filename: "in.png", Stage: image_export.StageReading, StartTime: time.Now().Add(-time.Second)},
+			1000: {WorkerType: image_export.WorkerTypePROC, Filename: "in.png", Stage: image_export.StageDecode, StartTime: time.Now().Add(-time.Second)},
+		},
+		WorkerRefs: map[int]image_export.WorkerRef{
+			0:    {WorkerType: image_export.WorkerTypeIO, WorkerID: 0},
+			1000: {WorkerType: image_export.WorkerTypePROC, WorkerID: 0},
+		},
+		Total:     1,
+		Target:    2,
+		Timestamp: time.Now(),
+	}
+
+	line := formatProgressLineV2(toProgressUpdateV2(update))
+	if !strings.Contains(line, "IO-W0:1:") {
+		t.Fatalf("expected IO worker label in progress line, got: %s", line)
+	}
+	if !strings.Contains(line, "PROC-W0:2:") {
+		t.Fatalf("expected processing worker label in progress line, got: %s", line)
+	}
+}
+
+func TestFormatProgressLineV2IdleWorkerRepresentation(t *testing.T) {
+	update := image_export.ProgressUpdate{
+		WorkerCounts: map[int]int{0: 0},
+		WorkerTasks:  map[int]*image_export.WorkerTask{0: nil},
+		Total:        0,
+		Target:       3,
+		Timestamp:    time.Now(),
+	}
+
+	line := formatProgressLineV2(toProgressUpdateV2(update))
+	if !strings.Contains(line, "W0:0:-:idle:-") {
+		t.Fatalf("expected idle worker encoding in progress line, got: %s", line)
 	}
 }
 

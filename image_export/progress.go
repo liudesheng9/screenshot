@@ -1,6 +1,7 @@
 package image_export
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -9,10 +10,62 @@ const (
 	defaultSlidingWindowSize  = 1024
 	defaultSlidingWindowRange = 30 * time.Second
 	progressEventBufferSize   = 100
+	processingWorkerIDOffset  = 1000
 )
+
+type WorkerType string
+
+const (
+	WorkerTypeDefault WorkerType = ""
+	WorkerTypeIO      WorkerType = "IO"
+	WorkerTypePROC    WorkerType = "PROC"
+)
+
+type Stage string
+
+const (
+	StageReading Stage = "reading"
+	StageRead    Stage = "read"
+	StageDecode  Stage = "decode"
+	StageEncode  Stage = "encode"
+	StageWrite   Stage = "write"
+	StageSync    Stage = "sync"
+)
+
+type WorkerRef struct {
+	WorkerType WorkerType
+	WorkerID   int
+}
+
+func (wr WorkerRef) Label() string {
+	switch wr.WorkerType {
+	case WorkerTypeIO:
+		return fmt.Sprintf("IO-W%d", wr.WorkerID)
+	case WorkerTypePROC:
+		return fmt.Sprintf("PROC-W%d", wr.WorkerID)
+	default:
+		return fmt.Sprintf("W%d", wr.WorkerID)
+	}
+}
+
+type WorkerTask struct {
+	WorkerType WorkerType
+	Filename   string
+	Stage      Stage
+	StartTime  time.Time
+}
+
+type StageReporter interface {
+	ReportStage(workerID int, filename string, stage Stage)
+	ClearWorkerTask(workerID int)
+}
 
 type ProgressUpdate struct {
 	WorkerCounts map[int]int
+	WorkerTasks  map[int]*WorkerTask
+	WorkerRefs   map[int]WorkerRef
+	Total        int
+	Target       int
 	Timestamp    time.Time
 }
 
@@ -86,8 +139,12 @@ func (sw *SlidingWindow) trimLocked(now time.Time) {
 type WorkerStats struct {
 	mu         sync.RWMutex
 	windows    map[int]*SlidingWindow
+	tasks      map[int]*WorkerTask
+	workerRefs map[int]WorkerRef
 	aggregator *ProgressAggregator
 }
+
+var _ StageReporter = (*WorkerStats)(nil)
 
 func NewWorkerStats(workerCount int) *WorkerStats {
 	if workerCount < 1 {
@@ -95,13 +152,84 @@ func NewWorkerStats(workerCount int) *WorkerStats {
 	}
 
 	stats := &WorkerStats{
-		windows: make(map[int]*SlidingWindow, workerCount),
+		windows:    make(map[int]*SlidingWindow, workerCount),
+		tasks:      make(map[int]*WorkerTask, workerCount),
+		workerRefs: make(map[int]WorkerRef, workerCount),
 	}
 	for workerID := 0; workerID < workerCount; workerID++ {
 		stats.windows[workerID] = NewSlidingWindow(defaultSlidingWindowSize, defaultSlidingWindowRange)
+		stats.workerRefs[workerID] = WorkerRef{WorkerType: WorkerTypeDefault, WorkerID: workerID}
 	}
 	stats.aggregator = NewProgressAggregator(stats)
 	return stats
+}
+
+func NewPipelineWorkerStats(ioWorkerCount, procWorkerCount int) *WorkerStats {
+	if ioWorkerCount < 1 {
+		ioWorkerCount = 1
+	}
+	if procWorkerCount < 1 {
+		procWorkerCount = 1
+	}
+
+	totalWorkers := ioWorkerCount + procWorkerCount
+	stats := &WorkerStats{
+		windows:    make(map[int]*SlidingWindow, totalWorkers),
+		tasks:      make(map[int]*WorkerTask, totalWorkers),
+		workerRefs: make(map[int]WorkerRef, totalWorkers),
+	}
+	for workerID := 0; workerID < ioWorkerCount; workerID++ {
+		internalID := ioWorkerInternalID(workerID)
+		stats.windows[internalID] = NewSlidingWindow(defaultSlidingWindowSize, defaultSlidingWindowRange)
+		stats.workerRefs[internalID] = WorkerRef{WorkerType: WorkerTypeIO, WorkerID: workerID}
+	}
+	for workerID := 0; workerID < procWorkerCount; workerID++ {
+		internalID := processingWorkerInternalID(workerID)
+		stats.windows[internalID] = NewSlidingWindow(defaultSlidingWindowSize, defaultSlidingWindowRange)
+		stats.workerRefs[internalID] = WorkerRef{WorkerType: WorkerTypePROC, WorkerID: workerID}
+	}
+	stats.aggregator = NewProgressAggregator(stats)
+	return stats
+}
+
+func ioWorkerInternalID(workerID int) int {
+	return workerID
+}
+
+func processingWorkerInternalID(workerID int) int {
+	return processingWorkerIDOffset + workerID
+}
+
+func inferWorkerRef(workerID int) WorkerRef {
+	if workerID >= processingWorkerIDOffset {
+		return WorkerRef{WorkerType: WorkerTypePROC, WorkerID: workerID - processingWorkerIDOffset}
+	}
+	return WorkerRef{WorkerType: WorkerTypeDefault, WorkerID: workerID}
+}
+
+func InferWorkerRef(workerID int) WorkerRef {
+	return inferWorkerRef(workerID)
+}
+
+func (ws *WorkerStats) workerRef(workerID int) WorkerRef {
+	if ws == nil {
+		return inferWorkerRef(workerID)
+	}
+
+	ws.mu.RLock()
+	ref, ok := ws.workerRefs[workerID]
+	ws.mu.RUnlock()
+	if ok {
+		return ref
+	}
+
+	ref = inferWorkerRef(workerID)
+	ws.mu.Lock()
+	if _, exists := ws.workerRefs[workerID]; !exists {
+		ws.workerRefs[workerID] = ref
+	}
+	ws.mu.Unlock()
+	return ref
 }
 
 func (ws *WorkerStats) Report(workerID int) {
@@ -126,6 +254,83 @@ func (ws *WorkerStats) GetWorkerCounts() map[int]int {
 	return counts
 }
 
+func (ws *WorkerStats) GetWorkerRefs() map[int]WorkerRef {
+	if ws == nil {
+		return map[int]WorkerRef{}
+	}
+
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+
+	refs := make(map[int]WorkerRef, len(ws.workerRefs))
+	for workerID, ref := range ws.workerRefs {
+		refs[workerID] = ref
+	}
+	return refs
+}
+
+func (ws *WorkerStats) ReportStage(workerID int, filename string, stage Stage) {
+	if ws == nil {
+		return
+	}
+
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	ref, ok := ws.workerRefs[workerID]
+	if !ok {
+		ref = inferWorkerRef(workerID)
+		ws.workerRefs[workerID] = ref
+	}
+
+	startTime := time.Now()
+	if existingTask, ok := ws.tasks[workerID]; ok && existingTask != nil && existingTask.Filename == filename {
+		if !existingTask.StartTime.IsZero() {
+			startTime = existingTask.StartTime
+		}
+	}
+
+	ws.tasks[workerID] = &WorkerTask{
+		WorkerType: ref.WorkerType,
+		Filename:   filename,
+		Stage:      stage,
+		StartTime:  startTime,
+	}
+}
+
+func (ws *WorkerStats) ClearWorkerTask(workerID int) {
+	if ws == nil {
+		return
+	}
+
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	delete(ws.tasks, workerID)
+}
+
+func (ws *WorkerStats) GetWorkerTasks() map[int]*WorkerTask {
+	if ws == nil {
+		return map[int]*WorkerTask{}
+	}
+
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+
+	tasks := make(map[int]*WorkerTask, len(ws.windows))
+	for workerID := range ws.windows {
+		tasks[workerID] = nil
+	}
+	for workerID, task := range ws.tasks {
+		if task == nil {
+			tasks[workerID] = nil
+			continue
+		}
+		clone := *task
+		tasks[workerID] = &clone
+	}
+	return tasks
+}
+
 func (ws *WorkerStats) Close() {
 	if ws == nil || ws.aggregator == nil {
 		return
@@ -148,6 +353,9 @@ func (ws *WorkerStats) addEvent(workerID int, eventTime time.Time) {
 		if !ok {
 			window = NewSlidingWindow(defaultSlidingWindowSize, defaultSlidingWindowRange)
 			ws.windows[workerID] = window
+		}
+		if _, hasRef := ws.workerRefs[workerID]; !hasRef {
+			ws.workerRefs[workerID] = inferWorkerRef(workerID)
 		}
 		ws.mu.Unlock()
 	}

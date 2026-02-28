@@ -71,10 +71,11 @@ func TestImportDirectoryFullFlow(t *testing.T) {
 
 	var fallbackDisplay int
 	var fallbackHashKind sql.NullString
+	var fallbackMachineID string
 	err = db.QueryRow(
-		`SELECT display_num, hash_kind FROM screenshots WHERE file_name = ?`,
+		`SELECT display_num, hash_kind, machine_id FROM screenshots WHERE file_name = ?`,
 		fallbackFileName,
-	).Scan(&fallbackDisplay, &fallbackHashKind)
+	).Scan(&fallbackDisplay, &fallbackHashKind, &fallbackMachineID)
 	if err != nil {
 		t.Fatalf("query fallback record: %v", err)
 	}
@@ -83,6 +84,9 @@ func TestImportDirectoryFullFlow(t *testing.T) {
 	}
 	if fallbackHashKind.Valid {
 		t.Fatalf("expected fallback hash_kind to be NULL, got %q", fallbackHashKind.String)
+	}
+	if fallbackMachineID != DefaultMachineID {
+		t.Fatalf("expected fallback machine_id=%q, got %q", DefaultMachineID, fallbackMachineID)
 	}
 
 	var exifHashKind sql.NullString
@@ -128,9 +132,9 @@ func TestImportDirectoryDedupSkipByID(t *testing.T) {
 	fileName := "20240101_000000_1.png"
 	writePNGFixture(t, filepath.Join(dir, fileName))
 
-	fileID := hashStringSHA256(fileName)
+	fileID := GenerateScreenshotID(DefaultMachineID, fileName)
 	_, err := db.Exec(
-		`INSERT INTO screenshots (id, file_name, year, month, day, hour, minute, second, display_num) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO screenshots (id, file_name, year, month, day, hour, minute, second, display_num, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		fileID,
 		fileName,
 		2024,
@@ -140,6 +144,7 @@ func TestImportDirectoryDedupSkipByID(t *testing.T) {
 		0,
 		0,
 		1,
+		DefaultMachineID,
 	)
 	if err != nil {
 		t.Fatalf("insert existing fixture: %v", err)
@@ -172,7 +177,7 @@ func TestImportDirectoryDedupUpdateByFilename(t *testing.T) {
 	writePNGFixture(t, filepath.Join(dir, fileName))
 
 	_, err := db.Exec(
-		`INSERT INTO screenshots (id, file_name, year, month, day, hour, minute, second, display_num) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO screenshots (id, file_name, year, month, day, hour, minute, second, display_num, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"legacy-id",
 		fileName,
 		2000,
@@ -182,6 +187,7 @@ func TestImportDirectoryDedupUpdateByFilename(t *testing.T) {
 		0,
 		0,
 		0,
+		DefaultMachineID,
 	)
 	if err != nil {
 		t.Fatalf("insert legacy row: %v", err)
@@ -205,8 +211,8 @@ func TestImportDirectoryDedupUpdateByFilename(t *testing.T) {
 		t.Fatalf("query updated row: %v", err)
 	}
 
-	if id != hashStringSHA256(fileName) {
-		t.Fatalf("expected updated id %s, got %s", hashStringSHA256(fileName), id)
+	if id != GenerateScreenshotID(DefaultMachineID, fileName) {
+		t.Fatalf("expected updated id %s, got %s", GenerateScreenshotID(DefaultMachineID, fileName), id)
 	}
 	if year != 2024 || month != 1 || day != 31 || hour != 23 || minute != 59 || second != 59 || display != 5 {
 		t.Fatalf("unexpected parsed timestamp/display in updated row: %d-%d-%d %d:%d:%d d=%d", year, month, day, hour, minute, second, display)
@@ -292,6 +298,145 @@ func TestImportDirectoryEdgeCases(t *testing.T) {
 	}
 
 	assertScreenshotRowCount(t, db, 1)
+}
+
+func TestImportDirectoryWithMachineIDProducesMachineScopedID(t *testing.T) {
+	db := createImportManagerTestDB(t)
+	defer db.Close()
+
+	dir := t.TempDir()
+	fileName := "20240210_101010_1.png"
+	writePNGFixture(t, filepath.Join(dir, fileName))
+
+	result, err := ImportDirectory(ImportConfig{
+		DB:        db,
+		Directory: dir,
+		MachineID: "laptop1",
+	})
+	if err != nil {
+		t.Fatalf("ImportDirectory returned error: %v", err)
+	}
+	if result.Inserted != 1 {
+		t.Fatalf("expected inserted=1, got %d", result.Inserted)
+	}
+
+	var id string
+	var machineID string
+	err = db.QueryRow(`SELECT id, machine_id FROM screenshots WHERE file_name = ?`, fileName).Scan(&id, &machineID)
+	if err != nil {
+		t.Fatalf("query imported row: %v", err)
+	}
+	if machineID != "laptop1" {
+		t.Fatalf("expected machine_id=laptop1, got %q", machineID)
+	}
+	wantID := GenerateScreenshotID("laptop1", fileName)
+	if id != wantID {
+		t.Fatalf("unexpected id: got=%s want=%s", id, wantID)
+	}
+}
+
+func TestImportDirectorySameFilenameDifferentMachinesCreateDistinctRecords(t *testing.T) {
+	db := createImportManagerTestDB(t)
+	defer db.Close()
+
+	fileName := "20240211_111111_2.png"
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	writePNGFixture(t, filepath.Join(dirA, fileName))
+	writePNGFixture(t, filepath.Join(dirB, fileName))
+
+	firstResult, err := ImportDirectory(ImportConfig{DB: db, Directory: dirA, MachineID: "laptop1"})
+	if err != nil {
+		t.Fatalf("first ImportDirectory returned error: %v", err)
+	}
+	if firstResult.Inserted != 1 {
+		t.Fatalf("expected first insert count=1, got %d", firstResult.Inserted)
+	}
+
+	secondResult, err := ImportDirectory(ImportConfig{DB: db, Directory: dirB, MachineID: "desktop1"})
+	if err != nil {
+		t.Fatalf("second ImportDirectory returned error: %v", err)
+	}
+	if secondResult.Inserted != 1 {
+		t.Fatalf("expected second insert count=1, got %d", secondResult.Inserted)
+	}
+
+	var count int
+	var distinctIDs int
+	err = db.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT id) FROM screenshots WHERE file_name = ?`, fileName).Scan(&count, &distinctIDs)
+	if err != nil {
+		t.Fatalf("count machine-scoped rows: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected two rows for same filename across machines, got %d", count)
+	}
+	if distinctIDs != 2 {
+		t.Fatalf("expected two distinct ids for same filename across machines, got %d", distinctIDs)
+	}
+}
+
+func TestImportDirectorySameFilenameSameMachineSkipsDuplicate(t *testing.T) {
+	db := createImportManagerTestDB(t)
+	defer db.Close()
+
+	fileName := "20240212_121212_3.png"
+	dir := t.TempDir()
+	writePNGFixture(t, filepath.Join(dir, fileName))
+
+	firstResult, err := ImportDirectory(ImportConfig{DB: db, Directory: dir, MachineID: "laptop1"})
+	if err != nil {
+		t.Fatalf("first ImportDirectory returned error: %v", err)
+	}
+	if firstResult.Inserted != 1 {
+		t.Fatalf("expected first insert count=1, got %d", firstResult.Inserted)
+	}
+
+	secondResult, err := ImportDirectory(ImportConfig{DB: db, Directory: dir, MachineID: "laptop1"})
+	if err != nil {
+		t.Fatalf("second ImportDirectory returned error: %v", err)
+	}
+	if secondResult.Skipped != 1 {
+		t.Fatalf("expected duplicate import to be skipped, got skipped=%d", secondResult.Skipped)
+	}
+
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM screenshots WHERE file_name = ? AND machine_id = ?`, fileName, "laptop1").Scan(&count)
+	if err != nil {
+		t.Fatalf("count same-machine rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one row for same machine+filename, got %d", count)
+	}
+}
+
+func TestImportDirectoryWithoutMachineUsesDefaultMachine(t *testing.T) {
+	db := createImportManagerTestDB(t)
+	defer db.Close()
+
+	dir := t.TempDir()
+	fileName := "20240213_131313_4.png"
+	writePNGFixture(t, filepath.Join(dir, fileName))
+
+	result, err := ImportDirectory(ImportConfig{DB: db, Directory: dir})
+	if err != nil {
+		t.Fatalf("ImportDirectory returned error: %v", err)
+	}
+	if result.Inserted != 1 {
+		t.Fatalf("expected inserted=1, got %d", result.Inserted)
+	}
+
+	var id string
+	var machineID string
+	err = db.QueryRow(`SELECT id, machine_id FROM screenshots WHERE file_name = ?`, fileName).Scan(&id, &machineID)
+	if err != nil {
+		t.Fatalf("query imported row: %v", err)
+	}
+	if machineID != DefaultMachineID {
+		t.Fatalf("expected default machine_id=%q, got %q", DefaultMachineID, machineID)
+	}
+	if id != GenerateScreenshotID(DefaultMachineID, fileName) {
+		t.Fatalf("unexpected id for default machine: got=%s want=%s", id, GenerateScreenshotID(DefaultMachineID, fileName))
+	}
 }
 
 func assertScreenshotRowCount(t *testing.T, db *sql.DB, want int) {

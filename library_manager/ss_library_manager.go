@@ -10,6 +10,7 @@ import (
 	"screenshot_server/Global"
 	"screenshot_server/image_manipulation"
 	"screenshot_server/utils"
+	"strings"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -19,6 +20,8 @@ type library_parameter struct {
 	timestamp string
 	path      string
 }
+
+const defaultMachineID = "default"
 
 func Init_database() *sql.DB {
 	db, err := sql.Open("sqlite3", Global.Global_constant_config.Database_path)
@@ -41,12 +44,16 @@ func hashStringSHA256(input string) string {
 	return hex.EncodeToString(hashBytes)
 }
 
-func create_database() error {
+func generateDefaultMachineScreenshotID(fileName string) string {
+	return hashStringSHA256(defaultMachineID + ":" + fileName)
+}
+
+func ensureScreenshotsTable(db *sql.DB) error {
 	createTableSQL := `
 	CREATE TABLE IF NOT EXISTS screenshots (
 		id TEXT PRIMARY KEY NOT NULL,
 		hash TEXT NULL,
-        hash_kind TEXT NULL,
+		hash_kind TEXT NULL,
 		year INT NULL,
 		month INT NULL,
 		day INT NULL,
@@ -54,30 +61,64 @@ func create_database() error {
 		minute INT NULL,
 		second INT NULL,
 		display_num INT NULL,
-		file_name TEXT 
+		file_name TEXT,
+		machine_id TEXT DEFAULT 'default'
 	);`
-	_, err := Global.Global_database.Exec(createTableSQL)
+	_, err := db.Exec(createTableSQL)
+	if err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+	return nil
+}
+
+func EnsureScreenshotsMachineIDSchema(db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("database is nil")
+	}
+
+	if err := ensureScreenshotsTable(db); err != nil {
+		return err
+	}
+
+	_, err := db.Exec(`ALTER TABLE screenshots ADD COLUMN machine_id TEXT DEFAULT 'default'`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return fmt.Errorf("failed to add machine_id column: %w", err)
+	}
+
+	if _, err := db.Exec(`UPDATE screenshots SET machine_id = 'default' WHERE machine_id IS NULL OR machine_id = ''`); err != nil {
+		return fmt.Errorf("failed to backfill machine_id values: %w", err)
+	}
+
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_machine_display ON screenshots(machine_id, display_num)`); err != nil {
+		return fmt.Errorf("failed to create idx_machine_display: %w", err)
+	}
+
+	return nil
+}
+
+func create_database() error {
+	err := EnsureScreenshotsMachineIDSchema(Global.Global_database)
 	if err != nil {
 		// Capture error instead of crashing
 		Global.AddStorageError("create_database", "", err.Error(), 0)
-		return fmt.Errorf("failed to create table: %w", err)
+		return err
 	}
 	fmt.Println("Table created successfully")
 	return nil
 }
 
 func insert_data_database(file string, database *sql.DB) error {
-	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	insertSQL_NULL := `INSERT INTO screenshots (id, file_name) VALUES (?, ?)`
+	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertSQL_NULL := `INSERT INTO screenshots (id, file_name, machine_id) VALUES (?, ?, ?)`
 
 	// Check if file already exists in database
 	fileName := filepath.Base(file)
-	fileID := hashStringSHA256(fileName)
+	fileID := generateDefaultMachineScreenshotID(fileName)
 
 	// Check if record exists
-	checkSQL := `SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ? OR file_name = ?)`
+	checkSQL := `SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ? OR (file_name = ? AND machine_id = ?))`
 	var exists bool
-	err := database.QueryRow(checkSQL, fileID, fileName).Scan(&exists)
+	err := database.QueryRow(checkSQL, fileID, fileName, defaultMachineID).Scan(&exists)
 	if err != nil {
 		fmt.Printf("Failed to check if record exists: %v, %s, %s\n", err, file, fileID)
 		return err
@@ -85,8 +126,8 @@ func insert_data_database(file string, database *sql.DB) error {
 
 	// Delete previous entry only if it exists
 	if exists {
-		deleteSQL := `DELETE FROM screenshots WHERE id = ? OR file_name = ?`
-		_, err := database.Exec(deleteSQL, fileID, fileName)
+		deleteSQL := `DELETE FROM screenshots WHERE id = ? OR (file_name = ? AND machine_id = ?)`
+		_, err := database.Exec(deleteSQL, fileID, fileName, defaultMachineID)
 		if err != nil {
 			fmt.Printf("Failed to delete existing entry: %v, %s, %s\n", err, file, fileID)
 			return err
@@ -96,7 +137,7 @@ func insert_data_database(file string, database *sql.DB) error {
 	// Continue with the regular insert process
 	Meta_data, err := image_manipulation.Substract_Meta_from_file(file)
 	if err != nil {
-		_, err = database.Exec(insertSQL_NULL, fileID, fileName)
+		_, err = database.Exec(insertSQL_NULL, fileID, fileName, defaultMachineID)
 		if err != nil {
 			fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, fileID)
 			return err
@@ -105,7 +146,7 @@ func insert_data_database(file string, database *sql.DB) error {
 	}
 	Meta_map := image_manipulation.Convert_Meta_to_interface_map(Meta_data)
 	Meta_map["file_name"] = fileName
-	_, err = database.Exec(insertSQL, fileID, fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"])
+	_, err = database.Exec(insertSQL, fileID, fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"], defaultMachineID)
 	if err != nil {
 		fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, fileID)
 		return err
@@ -202,16 +243,16 @@ func Insert_library(file_list []string) error {
 
 func query_data_exists_database(file string) (bool, error) {
 	filename := filepath.Base(file)
-	query_file_name := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE file_name = ?)"
+	query_file_name := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE file_name = ? AND machine_id = ?)"
 	query_hashSHA256 := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ?)"
 	var exists_file_name bool
 	var exists_hashSHA256 bool
-	err := Global.Global_database_managebot.QueryRow(query_file_name, filename).Scan(&exists_file_name)
+	err := Global.Global_database_managebot.QueryRow(query_file_name, filename, defaultMachineID).Scan(&exists_file_name)
 	if err != nil {
 		log.Fatalf("Failed to query: %v", err)
 		return false, err
 	}
-	err = Global.Global_database_managebot.QueryRow(query_hashSHA256, hashStringSHA256(filename)).Scan(&exists_hashSHA256)
+	err = Global.Global_database_managebot.QueryRow(query_hashSHA256, generateDefaultMachineScreenshotID(filename)).Scan(&exists_hashSHA256)
 	if err != nil {
 		log.Fatalf("Failed to query: %v", err)
 		return false, err

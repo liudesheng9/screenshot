@@ -76,6 +76,44 @@ func TestApplyRemap(t *testing.T) {
 	}
 }
 
+func TestGenerateScreenshotID(t *testing.T) {
+	testCases := []struct {
+		name      string
+		machineID string
+		fileName  string
+		want      string
+	}{
+		{
+			name:      "explicit_machine",
+			machineID: "laptop1",
+			fileName:  "img_001.png",
+			want:      hashStringSHA256("laptop1:img_001.png"),
+		},
+		{
+			name:      "empty_machine_defaults",
+			machineID: "",
+			fileName:  "img_001.png",
+			want:      hashStringSHA256("default:img_001.png"),
+		},
+		{
+			name:      "trimmed_empty_machine_defaults",
+			machineID: "  ",
+			fileName:  "img_001.png",
+			want:      hashStringSHA256("default:img_001.png"),
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := GenerateScreenshotID(tc.machineID, tc.fileName)
+			if got != tc.want {
+				t.Fatalf("unexpected id: got=%s want=%s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestShouldInsertOrUpdate(t *testing.T) {
 	fileID := "abc"
 
@@ -95,11 +133,12 @@ func TestCheckExists(t *testing.T) {
 	defer db.Close()
 
 	fileName := "exists.png"
-	fileID := hashStringSHA256(fileName)
+	fileID := GenerateScreenshotID(DefaultMachineID, fileName)
 	_, err := db.Exec(
-		`INSERT INTO screenshots (id, file_name) VALUES (?, ?)`,
+		`INSERT INTO screenshots (id, file_name, machine_id) VALUES (?, ?, ?)`,
 		fileID,
 		fileName,
+		DefaultMachineID,
 	)
 	if err != nil {
 		t.Fatalf("insert fixture: %v", err)
@@ -148,7 +187,8 @@ func createImportManagerTestDB(t *testing.T) *sql.DB {
 			minute INT NULL,
 			second INT NULL,
 			display_num INT NULL,
-			file_name TEXT
+			file_name TEXT,
+			machine_id TEXT DEFAULT 'default'
 		)
 	`)
 	if err != nil {

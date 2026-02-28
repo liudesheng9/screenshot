@@ -33,8 +33,9 @@ func checkExists(db *sql.DB, fileName string) (exists bool, existingID string, e
 		return false, "", fmt.Errorf("database is nil")
 	}
 
-	fileID := hashStringSHA256(fileName)
-	err = db.QueryRow(`SELECT id FROM screenshots WHERE id = ? OR file_name = ? LIMIT 1`, fileID, fileName).Scan(&existingID)
+	machineID := DefaultMachineID
+	fileID := GenerateScreenshotID(machineID, fileName)
+	err = db.QueryRow(`SELECT id FROM screenshots WHERE machine_id = ? AND (id = ? OR file_name = ?) LIMIT 1`, machineID, fileID, fileName).Scan(&existingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, "", nil
 	}
@@ -54,15 +55,15 @@ func shouldInsertOrUpdate(fileID string, idExists bool, existingIDByFileName str
 	return dedupInsert
 }
 
-func lookupDedupState(exec sqlExecutor, fileID, fileName string) (bool, string, error) {
+func lookupDedupState(exec sqlExecutor, fileID, fileName, machineID string) (bool, string, error) {
 	var idExists bool
-	err := exec.QueryRow(`SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ?)`, fileID).Scan(&idExists)
+	err := exec.QueryRow(`SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ? AND machine_id = ?)`, fileID, machineID).Scan(&idExists)
 	if err != nil {
 		return false, "", err
 	}
 
 	var existingID sql.NullString
-	err = exec.QueryRow(`SELECT id FROM screenshots WHERE file_name = ? LIMIT 1`, fileName).Scan(&existingID)
+	err = exec.QueryRow(`SELECT id FROM screenshots WHERE file_name = ? AND machine_id = ? LIMIT 1`, fileName, machineID).Scan(&existingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return idExists, "", nil
 	}
@@ -85,7 +86,7 @@ func metadataSQLValues(meta ImageMeta) (interface{}, interface{}) {
 func insertRecord(exec sqlExecutor, record importRecord) error {
 	hashValue, hashKindValue := metadataSQLValues(record.Meta)
 	_, err := exec.Exec(
-		`INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.FileID,
 		hashValue,
 		hashKindValue,
@@ -97,6 +98,7 @@ func insertRecord(exec sqlExecutor, record importRecord) error {
 		record.Meta.Second,
 		record.Meta.DisplayNum,
 		record.FileName,
+		record.MachineID,
 	)
 	return err
 }
@@ -104,7 +106,7 @@ func insertRecord(exec sqlExecutor, record importRecord) error {
 func updateRecordByFileName(exec sqlExecutor, record importRecord) error {
 	hashValue, hashKindValue := metadataSQLValues(record.Meta)
 	_, err := exec.Exec(
-		`UPDATE screenshots SET id = ?, hash = ?, hash_kind = ?, year = ?, month = ?, day = ?, hour = ?, minute = ?, second = ?, display_num = ?, file_name = ? WHERE file_name = ?`,
+		`UPDATE screenshots SET id = ?, hash = ?, hash_kind = ?, year = ?, month = ?, day = ?, hour = ?, minute = ?, second = ?, display_num = ?, file_name = ?, machine_id = ? WHERE file_name = ? AND machine_id = ?`,
 		record.FileID,
 		hashValue,
 		hashKindValue,
@@ -116,13 +118,15 @@ func updateRecordByFileName(exec sqlExecutor, record importRecord) error {
 		record.Meta.Second,
 		record.Meta.DisplayNum,
 		record.FileName,
+		record.MachineID,
 		record.FileName,
+		record.MachineID,
 	)
 	return err
 }
 
 func applyRecord(exec sqlExecutor, record importRecord) (dedupAction, error) {
-	idExists, existingIDByFileName, err := lookupDedupState(exec, record.FileID, record.FileName)
+	idExists, existingIDByFileName, err := lookupDedupState(exec, record.FileID, record.FileName, record.MachineID)
 	if err != nil {
 		return "", err
 	}

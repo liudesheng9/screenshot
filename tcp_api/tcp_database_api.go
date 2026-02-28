@@ -4,57 +4,110 @@ import (
 	"fmt"
 	"os"
 	"screenshot_server/Global"
+	"screenshot_server/import_manager"
+	"screenshot_server/library_manager"
 	"screenshot_server/utils"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-func query_database_count() (int, error) {
+func parseMachineFilterArgs(args []string) ([]string, string, error) {
+	cleaned := make([]string, 0, len(args))
+	machineID := ""
+
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--machine" {
+			cleaned = append(cleaned, args[i])
+			continue
+		}
+		if machineID != "" {
+			return nil, "", fmt.Errorf("duplicate --machine flag")
+		}
+		if i+1 >= len(args) {
+			return nil, "", fmt.Errorf("missing --machine value")
+		}
+		normalizedMachineID, err := import_manager.NormalizeMachineID(args[i+1])
+		if err != nil {
+			return nil, "", err
+		}
+		machineID = normalizedMachineID
+		i++
+	}
+
+	return cleaned, machineID, nil
+}
+
+func ensureMachineSchemaForFilter(machineID string) error {
+	if machineID == "" {
+		return nil
+	}
+	return library_manager.EnsureScreenshotsMachineIDSchema(Global.Global_database_net)
+}
+
+func query_database_count(machineID string) (int, error) {
 	var count int
-	err := Global.Global_database_net.QueryRow("SELECT count(*) FROM screenshots").Scan(&count)
+	query := "SELECT count(*) FROM screenshots"
+	args := make([]interface{}, 0)
+	if machineID != "" {
+		query += " WHERE machine_id = ?"
+		args = append(args, machineID)
+	}
+	err := Global.Global_database_net.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
 }
 
-func query_database_date_count(date string) (int, error) {
+func query_database_date_count(date string, machineID string) (int, error) {
 	var count int
 	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
-	err := Global.Global_database_net.QueryRow("SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=?", date_struct.Year, date_struct.Month, date_struct.Day).Scan(&count)
+	query := "SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=?"
+	args := []interface{}{date_struct.Year, date_struct.Month, date_struct.Day}
+	if machineID != "" {
+		query += " AND machine_id = ?"
+		args = append(args, machineID)
+	}
+	err := Global.Global_database_net.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
 }
 
-func query_database_hour_count(hour string) (int, error) {
+func query_database_hour_count(hour string, machineID string) (int, error) {
 	var count int
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
 	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
-	err := Global.Global_database_net.QueryRow("SELECT count(*) FROM screenshots WHERE hour=?", strconv.Itoa(hour_int)).Scan(&count)
+	query := "SELECT count(*) FROM screenshots WHERE hour=?"
+	args := []interface{}{strconv.Itoa(hour_int)}
+	if machineID != "" {
+		query += " AND machine_id = ?"
+		args = append(args, machineID)
+	}
+	err := Global.Global_database_net.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
 }
 
-func query_database_hour_count_all() map[string]int {
+func query_database_hour_count_all(machineID string) map[string]int {
 	task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
-		return query_database_hour_count(args[0].(string))
+		return query_database_hour_count(args[0].(string), args[1].(string))
 	}
 	res := make(map[string]int)
 	for hour_int := 0; hour_int < 24; hour_int++ {
-		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, strconv.Itoa(hour_int)).(int)
+		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, strconv.Itoa(hour_int), machineID).(int)
 		res[strconv.Itoa(hour_int)] = count
 	}
 	return res
 }
 
-func query_database_date_count_all() (map[string]int, error) {
+func query_database_date_count_all(machineID string) (map[string]int, error) {
 	/*
 		task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 			return strconv.Atoi(args[0].(string))
@@ -67,10 +120,17 @@ func query_database_date_count_all() (map[string]int, error) {
 			screenshots
 		WHERE
 			YEAR IS NOT NULL
+	`
+	args := make([]interface{}, 0)
+	if machineID != "" {
+		query += "\t\t\tAND machine_id = ?\n"
+		args = append(args, machineID)
+	}
+	query += `
 		ORDER BY 
 			formatted_date;
 	`
-	rows, err := Global.Global_database_net.Query(query)
+	rows, err := Global.Global_database_net.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +198,7 @@ func query_max_date() (string, error) {
 	return date, nil
 }
 
-func query_database_hour_date_count_all(hour string) (map[string]int, error) {
+func query_database_hour_date_count_all(hour string, machineID string) (map[string]int, error) {
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
@@ -151,10 +211,17 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 			screenshots
 		WHERE 
 			HOUR = ?
+	`
+	args := []interface{}{strconv.Itoa(hour_int)}
+	if machineID != "" {
+		query += "\t\t\tAND machine_id = ?\n"
+		args = append(args, machineID)
+	}
+	query += `
 		ORDER BY 
 			formatted_date;
 	`
-	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(hour_int))
+	rows, err := Global.Global_database_net.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +267,7 @@ func query_database_hour_date_count_all(hour string) (map[string]int, error) {
 	return res, nil
 }
 
-func query_database_date_hour_count_all(date string) (map[string]int, error) {
+func query_database_date_hour_count_all(date string, machineID string) (map[string]int, error) {
 	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
 	query := `
 		SELECT 
@@ -210,7 +277,12 @@ func query_database_date_hour_count_all(date string) (map[string]int, error) {
 		WHERE 
 			YEAR = ? AND MONTH = ? AND DAY = ?
 	`
-	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day))
+	args := []interface{}{strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day)}
+	if machineID != "" {
+		query += "\t\t\tAND machine_id = ?\n"
+		args = append(args, machineID)
+	}
+	rows, err := Global.Global_database_net.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +306,7 @@ func query_database_date_hour_count_all(date string) (map[string]int, error) {
 	return res, nil
 }
 
-func query_database_date_hour_count(date string, hour string) (int, error) {
+func query_database_date_hour_count(date string, hour string, machineID string) (int, error) {
 	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
@@ -242,20 +314,20 @@ func query_database_date_hour_count(date string, hour string) (int, error) {
 	hour_int := utils.Retry_task(task_strconv_atoi, Global.Globalsig_ss, hour).(int)
 
 	var count int
-	err := Global.Global_database_net.QueryRow(
-		"SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=? AND hour=?",
-		date_struct.Year,
-		date_struct.Month,
-		date_struct.Day,
-		hour_int,
-	).Scan(&count)
+	query := "SELECT count(*) FROM screenshots WHERE year=? AND month=? AND day=? AND hour=?"
+	args := []interface{}{date_struct.Year, date_struct.Month, date_struct.Day, hour_int}
+	if machineID != "" {
+		query += " AND machine_id = ?"
+		args = append(args, machineID)
+	}
+	err := Global.Global_database_net.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
 }
 
-func query_database_date_filename(date string) ([]string, error) {
+func query_database_date_filename(date string, machineID string) ([]string, error) {
 	date_struct := utils.Decode_dateTimeStr(date, Global.Globalsig_ss)
 	query := `
 		SELECT 
@@ -265,7 +337,12 @@ func query_database_date_filename(date string) ([]string, error) {
 		WHERE 
 			YEAR = ? AND MONTH = ? AND DAY = ?
 	`
-	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day))
+	args := []interface{}{strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day)}
+	if machineID != "" {
+		query += "\t\t\tAND machine_id = ?\n"
+		args = append(args, machineID)
+	}
+	rows, err := Global.Global_database_net.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +359,7 @@ func query_database_date_filename(date string) ([]string, error) {
 	return res, nil
 }
 
-func query_database_hour_filename(hour string) ([]string, error) {
+func query_database_hour_filename(hour string, machineID string) ([]string, error) {
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
@@ -295,7 +372,12 @@ func query_database_hour_filename(hour string) ([]string, error) {
 		WHERE 
 			HOUR = ?
 	`
-	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(hour_int))
+	args := []interface{}{strconv.Itoa(hour_int)}
+	if machineID != "" {
+		query += "\t\t\tAND machine_id = ?\n"
+		args = append(args, machineID)
+	}
+	rows, err := Global.Global_database_net.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +394,7 @@ func query_database_hour_filename(hour string) ([]string, error) {
 	return res, nil
 }
 
-func query_database_date_hour_filename(date string, hour string) ([]string, error) {
+func query_database_date_hour_filename(date string, hour string, machineID string) ([]string, error) {
 	task_strconv_atoi := func(args ...interface{}) (interface{}, error) {
 		return strconv.Atoi(args[0].(string))
 	}
@@ -326,7 +408,12 @@ func query_database_date_hour_filename(date string, hour string) ([]string, erro
 		WHERE 
 			YEAR = ? AND MONTH = ? AND DAY = ? AND HOUR = ?
 	`
-	rows, err := Global.Global_database_net.Query(query, strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day), strconv.Itoa(hour_int))
+	args := []interface{}{strconv.Itoa(date_struct.Year), strconv.Itoa(date_struct.Month), strconv.Itoa(date_struct.Day), strconv.Itoa(hour_int)}
+	if machineID != "" {
+		query += "\t\t\tAND machine_id = ?\n"
+		args = append(args, machineID)
+	}
+	rows, err := Global.Global_database_net.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -400,99 +487,109 @@ func formatHourCounts(res map[string]int) string {
 }
 
 func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
-	if len(recv_list) == 0 {
+	cleanedArgs, machineID, err := parseMachineFilterArgs(recv_list)
+	if err != nil {
+		writeSQLResponse(safe_conn, "invalid machine filter: "+err.Error())
+		return
+	}
+	if err := ensureMachineSchemaForFilter(machineID); err != nil {
+		writeSQLResponse(safe_conn, "sql count failed: "+err.Error())
+		return
+	}
+
+	if len(cleanedArgs) == 0 {
 		taskQueryDatabaseCount := func(args ...interface{}) (interface{}, error) {
-			return query_database_count()
+			return query_database_count(args[0].(string))
 		}
-		count := utils.Retry_task(taskQueryDatabaseCount, Global.Globalsig_ss).(int)
+		count := utils.Retry_task(taskQueryDatabaseCount, Global.Globalsig_ss, machineID).(int)
 		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
 		return
 	}
 
-	if len(recv_list) == 2 && recv_list[0] == "date" && recv_list[1] == "all" {
+	if len(cleanedArgs) == 2 && cleanedArgs[0] == "date" && cleanedArgs[1] == "all" {
 		taskQueryDatabaseDateCountAll := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_count_all()
+			return query_database_date_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(taskQueryDatabaseDateCountAll, Global.Globalsig_ss).(map[string]int)
+		res := utils.Retry_task(taskQueryDatabaseDateCountAll, Global.Globalsig_ss, machineID).(map[string]int)
 		writeSQLResponse(safe_conn, formatDateCounts(res))
 		return
 	}
-	if len(recv_list) == 2 && recv_list[0] == "date" {
-		date, err := validateCountDateArg(recv_list[1])
+	if len(cleanedArgs) == 2 && cleanedArgs[0] == "date" {
+		date, err := validateCountDateArg(cleanedArgs[1])
 		if err != nil {
 			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
 		taskQueryDatabaseDateCount := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_count(args[0].(string))
+			return query_database_date_count(args[0].(string), args[1].(string))
 		}
-		count := utils.Retry_task(taskQueryDatabaseDateCount, Global.Globalsig_ss, date).(int)
+		count := utils.Retry_task(taskQueryDatabaseDateCount, Global.Globalsig_ss, date, machineID).(int)
 		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
 		return
 	}
 
-	if len(recv_list) == 2 && recv_list[0] == "hour" && recv_list[1] == "all" {
-		res := query_database_hour_count_all()
+	if len(cleanedArgs) == 2 && cleanedArgs[0] == "hour" && cleanedArgs[1] == "all" {
+		res := query_database_hour_count_all(machineID)
 		writeSQLResponse(safe_conn, formatHourCounts(res))
 		return
 	}
-	if len(recv_list) == 2 && recv_list[0] == "hour" {
-		hour, err := validateCountHourArg(recv_list[1])
+	if len(cleanedArgs) == 2 && cleanedArgs[0] == "hour" {
+		hour, err := validateCountHourArg(cleanedArgs[1])
 		if err != nil {
 			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
 		taskQueryDatabaseHourCount := func(args ...interface{}) (interface{}, error) {
-			return query_database_hour_count(args[0].(string))
+			return query_database_hour_count(args[0].(string), args[1].(string))
 		}
-		count := utils.Retry_task(taskQueryDatabaseHourCount, Global.Globalsig_ss, hour).(int)
+		count := utils.Retry_task(taskQueryDatabaseHourCount, Global.Globalsig_ss, hour, machineID).(int)
 		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
 		return
 	}
 
-	if len(recv_list) == 4 && recv_list[0] == "date" && recv_list[2] == "hour" && recv_list[3] == "all" {
-		date, err := validateCountDateArg(recv_list[1])
+	if len(cleanedArgs) == 4 && cleanedArgs[0] == "date" && cleanedArgs[2] == "hour" && cleanedArgs[3] == "all" {
+		date, err := validateCountDateArg(cleanedArgs[1])
 		if err != nil {
 			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
 		taskQueryDatabaseDateHourCountAll := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_hour_count_all(args[0].(string))
+			return query_database_date_hour_count_all(args[0].(string), args[1].(string))
 		}
-		res := utils.Retry_task(taskQueryDatabaseDateHourCountAll, Global.Globalsig_ss, date).(map[string]int)
+		res := utils.Retry_task(taskQueryDatabaseDateHourCountAll, Global.Globalsig_ss, date, machineID).(map[string]int)
 		writeSQLResponse(safe_conn, formatHourCounts(res))
 		return
 	}
 
-	if len(recv_list) == 4 && recv_list[0] == "hour" && recv_list[2] == "date" && recv_list[3] == "all" {
-		hour, err := validateCountHourArg(recv_list[1])
+	if len(cleanedArgs) == 4 && cleanedArgs[0] == "hour" && cleanedArgs[2] == "date" && cleanedArgs[3] == "all" {
+		hour, err := validateCountHourArg(cleanedArgs[1])
 		if err != nil {
 			writeSQLResponse(safe_conn, err.Error())
 			return
 		}
 		taskQueryDatabaseHourDateCountAll := func(args ...interface{}) (interface{}, error) {
-			return query_database_hour_date_count_all(args[0].(string))
+			return query_database_hour_date_count_all(args[0].(string), args[1].(string))
 		}
-		res := utils.Retry_task(taskQueryDatabaseHourDateCountAll, Global.Globalsig_ss, hour).(map[string]int)
+		res := utils.Retry_task(taskQueryDatabaseHourDateCountAll, Global.Globalsig_ss, hour, machineID).(map[string]int)
 		writeSQLResponse(safe_conn, formatDateCounts(res))
 		return
 	}
 
-	if len(recv_list) == 4 && recv_list[0] == "date" && recv_list[2] == "hour" {
-		date, dateErr := validateCountDateArg(recv_list[1])
+	if len(cleanedArgs) == 4 && cleanedArgs[0] == "date" && cleanedArgs[2] == "hour" {
+		date, dateErr := validateCountDateArg(cleanedArgs[1])
 		if dateErr != nil {
 			writeSQLResponse(safe_conn, dateErr.Error())
 			return
 		}
-		hour, hourErr := validateCountHourArg(recv_list[3])
+		hour, hourErr := validateCountHourArg(cleanedArgs[3])
 		if hourErr != nil {
 			writeSQLResponse(safe_conn, hourErr.Error())
 			return
 		}
 		taskQueryDatabaseDateHourCount := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_hour_count(args[0].(string), args[1].(string))
+			return query_database_date_hour_count(args[0].(string), args[1].(string), args[2].(string))
 		}
-		count := utils.Retry_task(taskQueryDatabaseDateHourCount, Global.Globalsig_ss, date, hour).(int)
+		count := utils.Retry_task(taskQueryDatabaseDateHourCount, Global.Globalsig_ss, date, hour, machineID).(int)
 		writeSQLResponse(safe_conn, "total data count: "+strconv.Itoa(count))
 		return
 	}
@@ -501,12 +598,27 @@ func execute_sql_count(safe_conn utils.Safe_connection, recv_list []string) {
 }
 
 func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string, recv string) {
+	cleanedArgs, machineID, err := parseMachineFilterArgs(recv_list)
+	if err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid machine filter: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if err := ensureMachineSchemaForFilter(machineID); err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("sql dump count failed: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	recv_list = cleanedArgs
+
 	if len(recv_list) == 0 {
 		task_query_database_count := func(args ...interface{}) (interface{}, error) {
-			return query_database_count()
+			return query_database_count(args[0].(string))
 		}
 
-		count := utils.Retry_task(task_query_database_count, Global.Globalsig_ss).(int)
+		count := utils.Retry_task(task_query_database_count, Global.Globalsig_ss, machineID).(int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -526,7 +638,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 		}()
 		return
 	}
-	if recv_list[0] == "date" && recv_list[1] != "all" && len(recv_list) == 2 {
+	if len(recv_list) == 2 && recv_list[0] == "date" && recv_list[1] != "all" {
 		if len(recv_list[1]) != 8 {
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("invalid date format"))
@@ -541,9 +653,9 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 			return
 		}
 		task_query_database_date_count := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_count(args[0].(string))
+			return query_database_date_count(args[0].(string), args[1].(string))
 		}
-		count := utils.Retry_task(task_query_database_date_count, Global.Globalsig_ss, recv_list[1]).(int)
+		count := utils.Retry_task(task_query_database_date_count, Global.Globalsig_ss, recv_list[1], machineID).(int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -563,11 +675,11 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 		}()
 		return
 	}
-	if recv_list[0] == "date" && recv_list[1] == "all" && len(recv_list) == 2 {
+	if len(recv_list) == 2 && recv_list[0] == "date" && recv_list[1] == "all" {
 		task_query_database_date_count_all := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_count_all()
+			return query_database_date_count_all(args[0].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_count_all, Global.Globalsig_ss).(map[string]int)
+		res := utils.Retry_task(task_query_database_date_count_all, Global.Globalsig_ss, machineID).(map[string]int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -595,14 +707,14 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 
 		return
 	}
-	if recv_list[0] == "hour" && recv_list[1] != "all" && len(recv_list) == 2 {
+	if len(recv_list) == 2 && recv_list[0] == "hour" && recv_list[1] != "all" {
 		if len(recv_list[1]) > 2 {
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("invalid hour format"))
 			safe_conn.Lock.Unlock()
 			return
 		}
-		_, err := strconv.Atoi(recv_list[3])
+		_, err := strconv.Atoi(recv_list[1])
 		if err != nil {
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("invalid hour format"))
@@ -610,9 +722,9 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 			return
 		}
 		task_query_database_hour_count := func(args ...interface{}) (interface{}, error) {
-			return query_database_hour_count(args[0].(string))
+			return query_database_hour_count(args[0].(string), args[1].(string))
 		}
-		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, recv_list[1]).(int)
+		count := utils.Retry_task(task_query_database_hour_count, Global.Globalsig_ss, recv_list[1], machineID).(int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -633,8 +745,8 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 
 		return
 	}
-	if recv_list[0] == "hour" && recv_list[1] == "all" && len(recv_list) == 2 {
-		res := query_database_hour_count_all()
+	if len(recv_list) == 2 && recv_list[0] == "hour" && recv_list[1] == "all" {
+		res := query_database_hour_count_all(machineID)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -658,7 +770,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 
 		return
 	}
-	if recv_list[0] == "date" && recv_list[1] == "hour" && recv_list[2] == "all" && len(recv_list) == 4 {
+	if len(recv_list) == 4 && recv_list[0] == "date" && recv_list[1] == "hour" && recv_list[2] == "all" {
 		if len(recv_list[3]) != 8 {
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("invalid date format"))
@@ -673,9 +785,9 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 			return
 		}
 		task_query_database_date_hour_count_all := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_hour_count_all(args[0].(string))
+			return query_database_date_hour_count_all(args[0].(string), args[1].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_hour_count_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
+		res := utils.Retry_task(task_query_database_date_hour_count_all, Global.Globalsig_ss, recv_list[3], machineID).(map[string]int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -699,7 +811,7 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 
 		return
 	}
-	if recv_list[0] == "hour" && recv_list[1] == "date" && recv_list[2] == "all" && len(recv_list) == 4 {
+	if len(recv_list) == 4 && recv_list[0] == "hour" && recv_list[1] == "date" && recv_list[2] == "all" {
 		if len(recv_list[3]) > 2 {
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("invalid hour format"))
@@ -717,9 +829,9 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 			return strconv.Atoi(args[0].(string))
 		}
 		task_query_database_hour_date_all := func(args ...interface{}) (interface{}, error) {
-			return query_database_hour_date_count_all(args[0].(string))
+			return query_database_hour_date_count_all(args[0].(string), args[1].(string))
 		}
-		res := utils.Retry_task(task_query_database_hour_date_all, Global.Globalsig_ss, recv_list[3]).(map[string]int)
+		res := utils.Retry_task(task_query_database_hour_date_all, Global.Globalsig_ss, recv_list[3], machineID).(map[string]int)
 
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
@@ -761,6 +873,21 @@ func execute_sql_dump_count(safe_conn utils.Safe_connection, recv_list []string,
 }
 
 func execute_sql_dump_filename(safe_conn utils.Safe_connection, recv_list []string, recv string) {
+	cleanedArgs, machineID, err := parseMachineFilterArgs(recv_list)
+	if err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid machine filter: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	if err := ensureMachineSchemaForFilter(machineID); err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("sql dump filename failed: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	recv_list = cleanedArgs
+
 	if len(recv_list) == 0 {
 		safe_conn.Lock.Lock()
 		// safe_conn.Conn.Write([]byte("Target results dumped."))
@@ -784,9 +911,9 @@ func execute_sql_dump_filename(safe_conn utils.Safe_connection, recv_list []stri
 		}
 
 		task_query_database_hour_filename := func(args ...interface{}) (interface{}, error) {
-			return query_database_hour_filename(args[0].(string))
+			return query_database_hour_filename(args[0].(string), args[1].(string))
 		}
-		res := utils.Retry_task(task_query_database_hour_filename, Global.Globalsig_ss, recv_list[1]).([]string)
+		res := utils.Retry_task(task_query_database_hour_filename, Global.Globalsig_ss, recv_list[1], machineID).([]string)
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
 				file, err := os.Create(args[0].(string))
@@ -825,9 +952,9 @@ func execute_sql_dump_filename(safe_conn utils.Safe_connection, recv_list []stri
 		}
 
 		task_query_database_date_filename := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_filename(args[0].(string))
+			return query_database_date_filename(args[0].(string), args[1].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_filename, Global.Globalsig_ss, recv_list[1]).([]string)
+		res := utils.Retry_task(task_query_database_date_filename, Global.Globalsig_ss, recv_list[1], machineID).([]string)
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
 				file, err := os.Create(args[0].(string))
@@ -890,9 +1017,9 @@ func execute_sql_dump_filename(safe_conn utils.Safe_connection, recv_list []stri
 		date_string := recv_list[index_date+1]
 
 		task_query_database_date_hour_filename := func(args ...interface{}) (interface{}, error) {
-			return query_database_date_hour_filename(args[0].(string), args[1].(string))
+			return query_database_date_hour_filename(args[0].(string), args[1].(string), args[2].(string))
 		}
-		res := utils.Retry_task(task_query_database_date_hour_filename, Global.Globalsig_ss, date_string, hour_string).([]string)
+		res := utils.Retry_task(task_query_database_date_hour_filename, Global.Globalsig_ss, date_string, hour_string, machineID).([]string)
 		go func() {
 			task_os_create := func(args ...interface{}) (interface{}, error) {
 				file, err := os.Create(args[0].(string))

@@ -291,7 +291,7 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 }
 
 func execute_import_dir(safe_conn utils.Safe_connection, recv_list []string) {
-	usage := "usage: man import-dir <directory> [--remap 1:2,2:3]"
+	usage := "usage: man import-dir <directory> [--machine <id>] [--remap 1:2,2:3]"
 	if len(recv_list) == 0 {
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte(usage))
@@ -308,21 +308,33 @@ func execute_import_dir(safe_conn utils.Safe_connection, recv_list []string) {
 	}
 
 	var remapFlag string
+	machineID := import_manager.DefaultMachineID
 	for i := 1; i < len(recv_list); i++ {
-		if recv_list[i] != "--remap" {
+		switch recv_list[i] {
+		case "--remap":
+			if i+1 >= len(recv_list) {
+				safe_conn.Lock.Lock()
+				safe_conn.Conn.Write([]byte("missing --remap value; " + usage))
+				safe_conn.Lock.Unlock()
+				return
+			}
+			remapFlag = recv_list[i+1]
+			i++
+		case "--machine":
+			if i+1 >= len(recv_list) {
+				safe_conn.Lock.Lock()
+				safe_conn.Conn.Write([]byte("missing --machine value; " + usage))
+				safe_conn.Lock.Unlock()
+				return
+			}
+			machineID = recv_list[i+1]
+			i++
+		default:
 			safe_conn.Lock.Lock()
 			safe_conn.Conn.Write([]byte("invalid man import-dir command; " + usage))
 			safe_conn.Lock.Unlock()
 			return
 		}
-		if i+1 >= len(recv_list) {
-			safe_conn.Lock.Lock()
-			safe_conn.Conn.Write([]byte("missing --remap value; " + usage))
-			safe_conn.Lock.Unlock()
-			return
-		}
-		remapFlag = recv_list[i+1]
-		i++
 	}
 
 	info, err := os.Stat(directory)
@@ -337,6 +349,20 @@ func execute_import_dir(safe_conn utils.Safe_connection, recv_list []string) {
 	if err != nil {
 		safe_conn.Lock.Lock()
 		safe_conn.Conn.Write([]byte("invalid remap format: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+	machineID, err = import_manager.NormalizeMachineID(machineID)
+	if err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid machine_id: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+
+	if err := library_manager.EnsureScreenshotsMachineIDSchema(Global.Global_database_managebot); err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("import failed: " + err.Error()))
 		safe_conn.Lock.Unlock()
 		return
 	}
@@ -364,6 +390,7 @@ func execute_import_dir(safe_conn utils.Safe_connection, recv_list []string) {
 	result, err := import_manager.ImportDirectory(import_manager.ImportConfig{
 		DB:               Global.Global_database_managebot,
 		Directory:        directory,
+		MachineID:        machineID,
 		Remap:            remap,
 		ProgressCallback: progressCallback,
 	})

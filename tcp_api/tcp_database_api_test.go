@@ -3,6 +3,7 @@ package tcp_api
 import (
 	"database/sql"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,21 @@ func TestExecuteSQLCountCommands(t *testing.T) {
 			command:     "sql count date 20250101 hour 10",
 			wantContain: []string{"total data count: 2"},
 		},
+		{
+			name:        "count_by_machine_total",
+			command:     "sql count --machine laptop1",
+			wantContain: []string{"total data count: 3"},
+		},
+		{
+			name:        "count_by_machine_date",
+			command:     "sql count date 20250101 --machine laptop1",
+			wantContain: []string{"total data count: 2"},
+		},
+		{
+			name:        "count_by_machine_hour_all",
+			command:     "sql count hour all --machine laptop1",
+			wantContain: []string{"hour 10: 3", "hour 11: 0"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -78,6 +94,41 @@ func TestExecuteSQLCountCommands(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQueryDatabaseFilenameWithMachineFilter(t *testing.T) {
+	db := createTestScreenshotsDB(t)
+	defer db.Close()
+
+	restoreGlobals := installSQLTestGlobals(db)
+	defer restoreGlobals()
+
+	byDate, err := query_database_date_filename("20250101", "laptop1")
+	if err != nil {
+		t.Fatalf("query_database_date_filename returned error: %v", err)
+	}
+	sort.Strings(byDate)
+	if len(byDate) != 2 || byDate[0] != "a.png" || byDate[1] != "b.png" {
+		t.Fatalf("unexpected machine-filtered date filenames: %+v", byDate)
+	}
+
+	byHour, err := query_database_hour_filename("10", "laptop1")
+	if err != nil {
+		t.Fatalf("query_database_hour_filename returned error: %v", err)
+	}
+	sort.Strings(byHour)
+	if len(byHour) != 3 || byHour[0] != "a.png" || byHour[1] != "b.png" || byHour[2] != "d.png" {
+		t.Fatalf("unexpected machine-filtered hour filenames: %+v", byHour)
+	}
+
+	byDateHour, err := query_database_date_hour_filename("20250101", "10", "laptop1")
+	if err != nil {
+		t.Fatalf("query_database_date_hour_filename returned error: %v", err)
+	}
+	sort.Strings(byDateHour)
+	if len(byDateHour) != 2 || byDateHour[0] != "a.png" || byDateHour[1] != "b.png" {
+		t.Fatalf("unexpected machine-filtered date+hour filenames: %+v", byDateHour)
 	}
 }
 
@@ -96,7 +147,9 @@ func createTestScreenshotsDB(t *testing.T) *sql.DB {
 			day INTEGER,
 			hour INTEGER,
 			minute INTEGER,
-			file_name TEXT
+			display_num INTEGER,
+			file_name TEXT,
+			machine_id TEXT DEFAULT 'default'
 		)
 	`)
 	if err != nil {
@@ -104,11 +157,11 @@ func createTestScreenshotsDB(t *testing.T) *sql.DB {
 	}
 
 	_, err = db.Exec(`
-		INSERT INTO screenshots(year, month, day, hour, minute, file_name) VALUES
-			(2025, 1, 1, 10, 0, 'a.png'),
-			(2025, 1, 1, 10, 30, 'b.png'),
-			(2025, 1, 1, 11, 0, 'c.png'),
-			(2025, 1, 2, 10, 15, 'd.png')
+		INSERT INTO screenshots(year, month, day, hour, minute, display_num, file_name, machine_id) VALUES
+			(2025, 1, 1, 10, 0, 1, 'a.png', 'laptop1'),
+			(2025, 1, 1, 10, 30, 1, 'b.png', 'laptop1'),
+			(2025, 1, 1, 11, 0, 2, 'c.png', 'desktop1'),
+			(2025, 1, 2, 10, 15, 1, 'd.png', 'laptop1')
 	`)
 	if err != nil {
 		t.Fatalf("insert screenshots fixtures: %v", err)

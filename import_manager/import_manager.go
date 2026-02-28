@@ -66,7 +66,7 @@ discoverDone:
 		}
 		batchFiles := files[start:end]
 
-		records, prepErrors := prepareBatchRecords(batchFiles, config.Remap, config.WorkerCount)
+		records, prepErrors := prepareBatchRecords(batchFiles, config.Remap, config.WorkerCount, config.MachineID)
 		for _, prepErr := range prepErrors {
 			category := categorizeError(prepErr.err)
 			result.Processed++
@@ -139,12 +139,12 @@ func discoverPNGFiles(dir string) (<-chan string, error) {
 	return out, nil
 }
 
-func processBatch(db *sql.DB, files []string, remap map[int]int) (ImportBatchResult, error) {
+func processBatch(db *sql.DB, files []string, remap map[int]int, machineID string) (ImportBatchResult, error) {
 	if db == nil {
 		return ImportBatchResult{}, fmt.Errorf("database is nil")
 	}
 
-	records, prepErrors := prepareBatchRecords(files, remap, 1)
+	records, prepErrors := prepareBatchRecords(files, remap, 1, machineID)
 	result := ImportBatchResult{
 		ErrorsByCategory: make(map[string]int),
 	}
@@ -297,7 +297,7 @@ func processSingleRecord(db *sql.DB, record importRecord) (dedupAction, error) {
 	return action, nil
 }
 
-func prepareBatchRecords(files []string, remap map[int]int, workerCount int) ([]importRecord, []importRecordResult) {
+func prepareBatchRecords(files []string, remap map[int]int, workerCount int, machineID string) ([]importRecord, []importRecordResult) {
 	if workerCount < 1 {
 		workerCount = defaultWorkerCount
 	}
@@ -311,7 +311,7 @@ func prepareBatchRecords(files []string, remap map[int]int, workerCount int) ([]
 		go func() {
 			defer wg.Done()
 			for filePath := range jobs {
-				record, err := prepareRecord(filePath, remap)
+				record, err := prepareRecord(filePath, remap, machineID)
 				if err != nil {
 					results <- importRecordResult{file: filePath, err: err}
 					continue
@@ -344,10 +344,15 @@ func prepareBatchRecords(files []string, remap map[int]int, workerCount int) ([]
 	return records, prepErrors
 }
 
-func prepareRecord(filePath string, remap map[int]int) (importRecord, error) {
+func prepareRecord(filePath string, remap map[int]int, machineID string) (importRecord, error) {
 	fileName := filepath.Base(filePath)
 	if strings.TrimSpace(fileName) == "" {
 		return importRecord{}, fmt.Errorf("invalid file path: %s", filePath)
+	}
+
+	normalizedMachineID, err := NormalizeMachineID(machineID)
+	if err != nil {
+		return importRecord{}, err
 	}
 
 	meta, err := extractMetadata(filePath)
@@ -357,10 +362,11 @@ func prepareRecord(filePath string, remap map[int]int) (importRecord, error) {
 	meta.DisplayNum = applyRemap(meta.DisplayNum, remap)
 
 	return importRecord{
-		FilePath: filePath,
-		FileName: fileName,
-		FileID:   hashStringSHA256(fileName),
-		Meta:     meta,
+		FilePath:  filePath,
+		FileName:  fileName,
+		FileID:    GenerateScreenshotID(normalizedMachineID, fileName),
+		MachineID: normalizedMachineID,
+		Meta:      meta,
 	}, nil
 }
 
@@ -382,6 +388,11 @@ func normalizeImportConfig(config ImportConfig) (ImportConfig, error) {
 		config.Logger = log.Default()
 	}
 	config.Remap = cloneRemap(config.Remap)
+	normalizedMachineID, err := NormalizeMachineID(config.MachineID)
+	if err != nil {
+		return config, err
+	}
+	config.MachineID = normalizedMachineID
 	return config, nil
 }
 

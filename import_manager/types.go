@@ -20,6 +20,7 @@ type ImageMeta = image_manipulation.ImageMeta
 type ImportConfig struct {
 	DB               *sql.DB
 	Directory        string
+	MachineID        string
 	Remap            map[int]int
 	BatchSize        int
 	WorkerCount      int
@@ -74,10 +75,11 @@ type ImportBatchResult struct {
 }
 
 type importRecord struct {
-	FilePath string
-	FileName string
-	FileID   string
-	Meta     ImageMeta
+	FilePath  string
+	FileName  string
+	FileID    string
+	MachineID string
+	Meta      ImageMeta
 }
 
 type importRecordResult struct {

@@ -22,6 +22,7 @@ This application is a background service that:
 - **Library Management**: Automatic organization and cleanup of screenshots
 - **Headless Operation**: Runs as a background service without a GUI
 - **Data Consistency**: Handles duplicate entries by overwriting existing data
+- **Machine-Aware Imports**: Supports `--machine` tagging to keep same filenames from different machines as distinct records
 
 ## System Requirements
 
@@ -53,10 +54,14 @@ The server supports various commands through its TCP interface for control, quer
 - **sql count**: Get total count of screenshots in the database
 
   - `sql count`: Returns the total number of screenshots in the database
+  - `sql count --machine laptop1`: Returns the total number of screenshots for a specific machine
   - `sql count date YYYYMMDD`: Returns the count of screenshots taken on a specific date (format: YYYYMMDD)
+  - `sql count date YYYYMMDD --machine laptop1`: Returns the date count scoped to a machine
   - `sql count date all`: Returns the count of screenshots for each date in the database, sorted chronologically
   - `sql count hour HH`: Returns the count of screenshots taken during a specific hour (00-23)
+  - `sql count hour HH --machine laptop1`: Returns the hour count scoped to a machine
   - `sql count hour all`: Returns the count of screenshots for each hour (00-23), aggregated across all dates
+  - `sql count hour all --machine laptop1`: Returns hourly counts for one machine
   - `sql count date YYYYMMDD hour all`: Returns the count of screenshots per hour for a specific date
   - `sql count hour HH date all`: Returns the count of screenshots per date for a specific hour
   - `sql count date YYYYMMDD hour HH`: Returns the count of screenshots for a specific date and hour
@@ -74,6 +79,7 @@ The server supports various commands through its TCP interface for control, quer
   - `sql dump filename date YYYYMMDD`: Dumps filenames for a specific date to a file
   - `sql dump filename hour HH`: Dumps filenames for a specific hour to a file
   - `sql dump filename date YYYYMMDD hour HH`: Dumps filenames for a specific date and hour to a file
+  - Add `--machine <id>` to filename dump commands to scope results to one machine
 
 - **sql min_date**: Returns the earliest date that has screenshots in the database
 - **sql max_date**: Returns the latest date that has screenshots in the database
@@ -88,11 +94,16 @@ The server supports various commands through its TCP interface for control, quer
 - **man dump clean**: Cleans up dump files from the dump directory
 - **man mem check**: Starts the memory image checking robot to scan for image integrity
 - **man tidy database**: Runs database maintenance to clean up and optimize the database
-- **man import-dir [dir] [--remap A:B,...]**: Imports PNG metadata from an external directory into the local database
+- **man import-dir [dir] [--machine <id>] [--remap A:B,...]**: Imports PNG metadata from an external directory into the local database
   - Uses PNG EXIF metadata first, then falls back to filename parsing
-  - Skips duplicates by ID and updates existing rows when filename matches with a different ID
+  - Default machine is `default` when `--machine` is omitted
+  - `machine_id` must match `[A-Za-z0-9_-]` and be at most 64 characters
+  - Uses machine-scoped IDs: `SHA256(machine_id + ":" + filename)`
+  - Skips duplicates by ID and updates existing rows when filename matches within the same machine with a different ID
   - Example: `man import-dir D:/backup/screenshots`
+  - Example with machine: `man import-dir D:/backup/screenshots --machine laptop1`
   - Example with remap: `man import-dir D:/backup/screenshots --remap 1:2,2:3`
+  - Example with machine and remap: `man import-dir D:/backup/screenshots --machine laptop1 --remap 1:2`
 - **man status**: Shows the current status of the screenshot service and storage
   - Displays if screenshot service is running or stopped
   - Shows the number of active screenshot threads if running
@@ -107,12 +118,19 @@ The server supports various commands through its TCP interface for control, quer
 
 Screenshots are stored in a SQLite database with the following schema:
 
-- id: Unique identifier (SHA-256 hash of filename)
+- id: Unique identifier (SHA-256 hash of `machine_id:filename`)
 - hash: Image hash
 - hash_kind: Type of hash algorithm used
 - year, month, day, hour, minute, second: Timestamp information
 - display_num: Monitor/display number
 - file_name: Original filename
+- machine_id: Source machine identifier (`default` for legacy/single-machine imports)
+
+## Migration Notes
+
+- Existing deployments are automatically migrated by adding `machine_id` with default value `default`.
+- Existing records remain queryable and now belong to the `default` machine scope.
+- To preserve per-device identity for new imports, start using `--machine <id>` on `man import-dir` commands.
 
 ## Network Interface
 

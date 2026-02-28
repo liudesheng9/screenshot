@@ -88,6 +88,11 @@ The server supports various commands through its TCP interface for control, quer
 - **man dump clean**: Cleans up dump files from the dump directory
 - **man mem check**: Starts the memory image checking robot to scan for image integrity
 - **man tidy database**: Runs database maintenance to clean up and optimize the database
+- **man import-dir [dir] [--remap A:B,...]**: Imports PNG metadata from an external directory into the local database
+  - Uses PNG EXIF metadata first, then falls back to filename parsing
+  - Skips duplicates by ID and updates existing rows when filename matches with a different ID
+  - Example: `man import-dir D:/backup/screenshots`
+  - Example with remap: `man import-dir D:/backup/screenshots --remap 1:2,2:3`
 - **man status**: Shows the current status of the screenshot service and storage
   - Displays if screenshot service is running or stopped
   - Shows the number of active screenshot threads if running

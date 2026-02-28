@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"screenshot_server/Global"
+	"screenshot_server/import_manager"
 	"screenshot_server/init_config"
 	"screenshot_server/library_manager"
 	"screenshot_server/utils"
@@ -272,6 +273,10 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 		safe_conn.Lock.Unlock()
 		return
 	}
+	if len(recv_list) >= 2 && recv_list[1] == "import-dir" {
+		execute_import_dir(safe_conn, recv_list[2:])
+		return
+	}
 	if len(recv_list) > 1 && recv_list[1] == "config" {
 		execute_config_operation(safe_conn, recv_list[2:])
 		return
@@ -282,6 +287,99 @@ func Execute_manager(safe_conn utils.Safe_connection, recv string) {
 	}
 	safe_conn.Lock.Lock()
 	safe_conn.Conn.Write([]byte("invalid man command"))
+	safe_conn.Lock.Unlock()
+}
+
+func execute_import_dir(safe_conn utils.Safe_connection, recv_list []string) {
+	usage := "usage: man import-dir <directory> [--remap 1:2,2:3]"
+	if len(recv_list) == 0 {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte(usage))
+		safe_conn.Lock.Unlock()
+		return
+	}
+
+	directory := strings.TrimSpace(recv_list[0])
+	if directory == "" {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid directory path"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+
+	var remapFlag string
+	for i := 1; i < len(recv_list); i++ {
+		if recv_list[i] != "--remap" {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("invalid man import-dir command; " + usage))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		if i+1 >= len(recv_list) {
+			safe_conn.Lock.Lock()
+			safe_conn.Conn.Write([]byte("missing --remap value; " + usage))
+			safe_conn.Lock.Unlock()
+			return
+		}
+		remapFlag = recv_list[i+1]
+		i++
+	}
+
+	info, err := os.Stat(directory)
+	if err != nil || !info.IsDir() {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("directory not found"))
+		safe_conn.Lock.Unlock()
+		return
+	}
+
+	remap, err := import_manager.ParseRemapFlag(remapFlag)
+	if err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("invalid remap format: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+
+	lastReported := -1
+	progressCallback := func(progress import_manager.ImportProgress) {
+		if progress.Processed != progress.Total && progress.Processed-lastReported < 25 {
+			return
+		}
+		lastReported = progress.Processed
+		message := fmt.Sprintf(
+			"import progress: %d/%d inserted=%d updated=%d skipped=%d failed=%d\n",
+			progress.Processed,
+			progress.Total,
+			progress.Inserted,
+			progress.Updated,
+			progress.Skipped,
+			progress.Failed,
+		)
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte(message))
+		safe_conn.Lock.Unlock()
+	}
+
+	result, err := import_manager.ImportDirectory(import_manager.ImportConfig{
+		DB:               Global.Global_database_managebot,
+		Directory:        directory,
+		Remap:            remap,
+		ProgressCallback: progressCallback,
+	})
+	if err != nil {
+		safe_conn.Lock.Lock()
+		safe_conn.Conn.Write([]byte("import failed: " + err.Error()))
+		safe_conn.Lock.Unlock()
+		return
+	}
+
+	safe_conn.Lock.Lock()
+	if result.Interrupted {
+		safe_conn.Conn.Write([]byte("import interrupted: " + result.Summary()))
+	} else {
+		safe_conn.Conn.Write([]byte("import complete: " + result.Summary()))
+	}
 	safe_conn.Lock.Unlock()
 }
 

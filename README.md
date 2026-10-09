@@ -22,6 +22,7 @@ This application is a background service that:
 - **Library Management**: Automatic organization and cleanup of screenshots
 - **Headless Operation**: Runs as a background service without a GUI
 - **Data Consistency**: Handles duplicate entries by overwriting existing data
+- **Batched Archiving**: Archived screenshots are written to the database in transactions of 1000 rows (indexed dedup lookups), with per-row fallback if a batch fails
 - **Machine-Aware Imports**: Supports `--machine` tagging to keep same filenames from different machines as distinct records
 
 ## System Requirements

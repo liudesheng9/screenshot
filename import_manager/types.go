@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultBatchSize   = 100
+	defaultBatchSize   = 1000
 	defaultWorkerCount = 4
 )
 

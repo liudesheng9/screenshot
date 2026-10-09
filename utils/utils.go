@@ -302,6 +302,10 @@ func Copy_file(src, dst string) error {
 }
 
 func Move_file(src, dst string) error {
+	// A rename is instant on the same volume; fall back to copy+delete across volumes.
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
 	err := Copy_file(src, dst)
 	if err != nil {
 		return err

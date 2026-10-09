@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"runtime"
 	"screenshot_server/Global"
 	"screenshot_server/image_manipulation"
 	"screenshot_server/utils"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -22,6 +24,19 @@ type library_parameter struct {
 }
 
 const defaultMachineID = "default"
+
+// archiveBatchSize is the number of rows written per SQLite transaction when
+// archiving screenshots. Committing once per batch instead of once per row
+// avoids a disk sync for every screenshot.
+const archiveBatchSize = 1000
+
+// archiveWorkerCount bounds the goroutines used for metadata extraction and
+// file moves, both of which are I/O bound.
+var archiveWorkerCount = min(runtime.NumCPU(), 8)
+
+// schemaReady is set once the screenshots schema has been ensured, so the
+// migration/backfill statements do not rescan the table on every archive run.
+var schemaReady atomic.Bool
 
 func Init_database() *sql.DB {
 	db, err := sql.Open("sqlite3", Global.Global_constant_config.Database_path)
@@ -93,95 +108,178 @@ func EnsureScreenshotsMachineIDSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create idx_machine_display: %w", err)
 	}
 
+	// Dedup lookups match on (machine_id, file_name); without this index every
+	// lookup is a full table scan.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_machine_file_name ON screenshots(machine_id, file_name)`); err != nil {
+		return fmt.Errorf("failed to create idx_machine_file_name: %w", err)
+	}
+
 	return nil
 }
 
 func create_database() error {
+	if schemaReady.Load() {
+		return nil
+	}
 	err := EnsureScreenshotsMachineIDSchema(Global.Global_database)
 	if err != nil {
 		// Capture error instead of crashing
 		Global.AddStorageError("create_database", "", err.Error(), 0)
 		return err
 	}
+	schemaReady.Store(true)
 	fmt.Println("Table created successfully")
 	return nil
 }
 
-func insert_data_database(file string, database *sql.DB) error {
-	insertSQL := `INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	insertSQL_NULL := `INSERT INTO screenshots (id, file_name, machine_id) VALUES (?, ?, ?)`
-
-	// Check if file already exists in database
-	fileName := filepath.Base(file)
-	fileID := generateDefaultMachineScreenshotID(fileName)
-
-	// Check if record exists
-	checkSQL := `SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ? OR (file_name = ? AND machine_id = ?))`
-	var exists bool
-	err := database.QueryRow(checkSQL, fileID, fileName, defaultMachineID).Scan(&exists)
-	if err != nil {
-		fmt.Printf("Failed to check if record exists: %v, %s, %s\n", err, file, fileID)
-		return err
-	}
-
-	// Delete previous entry only if it exists
-	if exists {
-		deleteSQL := `DELETE FROM screenshots WHERE id = ? OR (file_name = ? AND machine_id = ?)`
-		_, err := database.Exec(deleteSQL, fileID, fileName, defaultMachineID)
-		if err != nil {
-			fmt.Printf("Failed to delete existing entry: %v, %s, %s\n", err, file, fileID)
-			return err
-		}
-	}
-
-	// Continue with the regular insert process
-	Meta_data, err := image_manipulation.Substract_Meta_from_file(file)
-	if err != nil {
-		_, err = database.Exec(insertSQL_NULL, fileID, fileName, defaultMachineID)
-		if err != nil {
-			fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, fileID)
-			return err
-		}
-		return nil
-	}
-	Meta_map := image_manipulation.Convert_Meta_to_interface_map(Meta_data)
-	Meta_map["file_name"] = fileName
-	_, err = database.Exec(insertSQL, fileID, fmt.Sprintf("%d", Meta_map["hash"]), Meta_map["hash_kind"], Meta_map["year"], Meta_map["month"], Meta_map["day"], Meta_map["hour"], Meta_map["minute"], Meta_map["second"], Meta_map["display_num"], Meta_map["file_name"], defaultMachineID)
-	if err != nil {
-		fmt.Printf("Failed to insert: %v, %s, %s\n", err, file, fileID)
-		return err
-	}
-	return nil
+// archiveRecord is a screenshot file with its metadata already extracted, ready
+// to be written to the database.
+type archiveRecord struct {
+	fileName string
+	id       string
+	meta     image_manipulation.ImageMeta
+	hasMeta  bool
 }
 
-func insert_data_database_worker_manager(file_list []string, numWorkers int, database *sql.DB) {
-	numTasks := len(file_list)
-
-	single_task_insert_data_database := func(args ...interface{}) error {
-		return insert_data_database(args[0].(string), database)
+func prepareArchiveRecord(file string) archiveRecord {
+	fileName := filepath.Base(file)
+	record := archiveRecord{
+		fileName: fileName,
+		id:       generateDefaultMachineScreenshotID(fileName),
 	}
+	meta, err := image_manipulation.Substract_Meta_from_file(file)
+	if err == nil {
+		record.meta = meta
+		record.hasMeta = true
+	}
+	return record
+}
+
+// prepareArchiveRecords extracts metadata for files in parallel, preserving order.
+func prepareArchiveRecords(file_list []string, numWorkers int) []archiveRecord {
+	records := make([]archiveRecord, len(file_list))
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
+
 	var wg sync.WaitGroup
+	indexes := make(chan int, len(file_list))
+	for i := range file_list {
+		indexes <- i
+	}
+	close(indexes)
 
-	tasks := make(chan string, numTasks)
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range indexes {
+				records[i] = prepareArchiveRecord(file_list[i])
+			}
+		}()
+	}
+	wg.Wait()
+	return records
+}
 
-	worker := func(id int, in <-chan string, wg *sync.WaitGroup) {
-		defer wg.Done()
-		for file := range in {
-			utils.Retry_single_task(single_task_insert_data_database, Global.Globalsig_ss, file)
+type archiveStatements struct {
+	delete     *sql.Stmt
+	insert     *sql.Stmt
+	insertNull *sql.Stmt
+}
+
+func prepareArchiveStatements(tx *sql.Tx) (*archiveStatements, error) {
+	stmts := &archiveStatements{}
+	var err error
+	if stmts.delete, err = tx.Prepare(`DELETE FROM screenshots WHERE id = ? OR (file_name = ? AND machine_id = ?)`); err != nil {
+		return nil, err
+	}
+	if stmts.insert, err = tx.Prepare(`INSERT INTO screenshots (id, hash, hash_kind, year, month, day, hour, minute, second, display_num, file_name, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
+		stmts.close()
+		return nil, err
+	}
+	if stmts.insertNull, err = tx.Prepare(`INSERT INTO screenshots (id, file_name, machine_id) VALUES (?, ?, ?)`); err != nil {
+		stmts.close()
+		return nil, err
+	}
+	return stmts, nil
+}
+
+func (s *archiveStatements) close() {
+	for _, stmt := range []*sql.Stmt{s.delete, s.insert, s.insertNull} {
+		if stmt != nil {
+			stmt.Close()
 		}
 	}
+}
 
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go worker(i, tasks, &wg)
+// write overwrites any existing row for the record's id or file name.
+func (s *archiveStatements) write(record archiveRecord) error {
+	if _, err := s.delete.Exec(record.id, record.fileName, defaultMachineID); err != nil {
+		return fmt.Errorf("failed to delete existing entry: %w", err)
 	}
-	for _, file := range file_list {
-		tasks <- file
+	if !record.hasMeta {
+		_, err := s.insertNull.Exec(record.id, record.fileName, defaultMachineID)
+		return err
 	}
+	meta := record.meta
+	_, err := s.insert.Exec(record.id, fmt.Sprintf("%d", meta.Hash), meta.HashKind, meta.Year, meta.Month, meta.Day, meta.Hour, meta.Minute, meta.Second, meta.DisplayNum, record.fileName, defaultMachineID)
+	return err
+}
 
-	// close task channel
-	close(tasks)
-	wg.Wait()
+// insert_batch_database writes all records in a single transaction.
+func insert_batch_database(records []archiveRecord, database *sql.DB) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	stmts, err := prepareArchiveStatements(tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmts.close()
+
+	for _, record := range records {
+		if err := stmts.write(record); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("batch insert failed on %s: %w", record.fileName, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// insert_archive_records writes records as one transaction, falling back to
+// one transaction per record so a single bad row cannot block the rest.
+func insert_archive_records(records []archiveRecord, database *sql.DB) {
+	if len(records) == 0 {
+		return
+	}
+	err := insert_batch_database(records, database)
+	if err == nil {
+		return
+	}
+	fmt.Printf("Batch insert of %d records failed, falling back to per-record inserts: %v\n", len(records), err)
+	Global.AddStorageError("insert_batch_database", "", err.Error(), 0)
+
+	single_task_insert_record := func(args ...interface{}) error {
+		return insert_batch_database([]archiveRecord{args[0].(archiveRecord)}, database)
+	}
+	for _, record := range records {
+		utils.Retry_single_task(single_task_insert_record, Global.Globalsig_ss, record)
+	}
+}
+
+func insert_data_database_batched(file_list []string, batchSize int, database *sql.DB) {
+	for start := 0; start < len(file_list); start += batchSize {
+		end := min(start+batchSize, len(file_list))
+		records := prepareArchiveRecords(file_list[start:end], archiveWorkerCount)
+		insert_archive_records(records, database)
+		fmt.Printf("archived %d/%d records to database\n", end, len(file_list))
+		if *Global.Globalsig_ss == 0 {
+			return
+		}
+	}
 }
 
 func remove_cache_to_memimg(file string) error {
@@ -205,13 +303,42 @@ func remove_cache_to_memimg(file string) error {
 	return nil
 }
 
-func remove_cache_to_memimg_manager(file_list []string) {
-	single_task_remove_cache_to_memimg := func(args ...interface{}) error {
-		return remove_cache_to_memimg(args[0].(string))
+// remove_cache_to_memimg_manager moves files in parallel and returns the files
+// that could not be moved, in input order.
+func remove_cache_to_memimg_manager(file_list []string, numWorkers int) []string {
+	failed := make([]bool, len(file_list))
+	if numWorkers < 1 {
+		numWorkers = 1
 	}
-	for _, file := range file_list {
-		utils.Retry_single_task(single_task_remove_cache_to_memimg, Global.Globalsig_ss, file)
+
+	var wg sync.WaitGroup
+	indexes := make(chan int, len(file_list))
+	for i := range file_list {
+		indexes <- i
 	}
+	close(indexes)
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range indexes {
+				if err := remove_cache_to_memimg(file_list[i]); err != nil {
+					Global.AddStorageError("Insert_library", file_list[i], "move failed: "+err.Error(), 0)
+					failed[i] = true
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	failedMoves := []string{}
+	for i, file := range file_list {
+		if failed[i] {
+			failedMoves = append(failedMoves, file)
+		}
+	}
+	return failedMoves
 }
 
 func Insert_library(file_list []string) error {
@@ -223,87 +350,60 @@ func Insert_library(file_list []string) error {
 	}
 	utils.Retry_single_task(single_task_create_database, Global.Globalsig_ss)
 
-	insert_data_database_worker_manager(file_list, 1, Global.Global_database)
+	insert_data_database_batched(file_list, archiveBatchSize, Global.Global_database)
 
 	// Track failed moves so files stay in cache
-	failedMoves := []string{}
-	for _, file := range file_list {
-		err := remove_cache_to_memimg(file)
-		if err != nil {
-			Global.AddStorageError("Insert_library", file, "move failed: "+err.Error(), 0)
-			failedMoves = append(failedMoves, file)
-		}
-	}
-
+	failedMoves := remove_cache_to_memimg_manager(file_list, archiveWorkerCount)
 	if len(failedMoves) > 0 {
 		return fmt.Errorf("failed to move %d files (kept in cache): %v", len(failedMoves), failedMoves)
 	}
 	return nil
 }
 
-func query_data_exists_database(file string) (bool, error) {
-	filename := filepath.Base(file)
-	query_file_name := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE file_name = ? AND machine_id = ?)"
-	query_hashSHA256 := "SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ?)"
-	var exists_file_name bool
-	var exists_hashSHA256 bool
-	err := Global.Global_database_managebot.QueryRow(query_file_name, filename, defaultMachineID).Scan(&exists_file_name)
+// filter_missing_files returns the files that have no row in the database,
+// checking them all inside one read transaction.
+func filter_missing_files(file_list []string, database *sql.DB) ([]string, error) {
+	tx, err := database.Begin()
 	if err != nil {
-		log.Fatalf("Failed to query: %v", err)
-		return false, err
+		return nil, err
 	}
-	err = Global.Global_database_managebot.QueryRow(query_hashSHA256, generateDefaultMachineScreenshotID(filename)).Scan(&exists_hashSHA256)
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`SELECT EXISTS(SELECT 1 FROM screenshots WHERE id = ? OR (file_name = ? AND machine_id = ?))`)
 	if err != nil {
-		log.Fatalf("Failed to query: %v", err)
-		return false, err
+		return nil, err
 	}
-	exists := exists_file_name || exists_hashSHA256
-	return exists, nil
-}
+	defer stmt.Close()
 
-func query_data_insert_database(file string) error {
-	task_query_data_exists_database := func(args ...interface{}) (interface{}, error) {
-		return query_data_exists_database(args[0].(string))
-	}
-	exists := utils.Retry_task(task_query_data_exists_database, Global.Globalsig_ss, file).(bool)
-	if exists {
-		return nil
-	}
-	err := insert_data_database(file, Global.Global_database_managebot)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func insert_data_database_worker_manager_with_exist_bool(file_list []string, numWorkers int) {
-	numTasks := len(file_list)
-
-	single_task_query_data_insert_database := func(args ...interface{}) error {
-		return query_data_insert_database(args[0].(string))
-	}
-	var wg sync.WaitGroup
-
-	tasks := make(chan string, numTasks)
-
-	worker := func(id int, in <-chan string, wg *sync.WaitGroup) {
-		defer wg.Done()
-		for file := range in {
-			utils.Retry_single_task(single_task_query_data_insert_database, Global.Globalsig_ss, file)
+	missing := []string{}
+	for _, file := range file_list {
+		fileName := filepath.Base(file)
+		var exists bool
+		if err := stmt.QueryRow(generateDefaultMachineScreenshotID(fileName), fileName, defaultMachineID).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("failed to query %s: %w", file, err)
+		}
+		if !exists {
+			missing = append(missing, file)
 		}
 	}
+	return missing, nil
+}
 
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go worker(i, tasks, &wg)
+// insert_missing_data_database_batched inserts rows for files not yet in the
+// database, batchSize files at a time.
+func insert_missing_data_database_batched(file_list []string, batchSize int, database *sql.DB) {
+	task_filter_missing_files := func(args ...interface{}) (interface{}, error) {
+		return filter_missing_files(args[0].([]string), database)
 	}
-	for _, file := range file_list {
-		tasks <- file
+	for start := 0; start < len(file_list); start += batchSize {
+		end := min(start+batchSize, len(file_list))
+		missing, _ := utils.Retry_task(task_filter_missing_files, Global.Globalsig_ss, file_list[start:end]).([]string)
+		records := prepareArchiveRecords(missing, archiveWorkerCount)
+		insert_archive_records(records, database)
+		if *Global.Globalsig_ss == 0 {
+			return
+		}
 	}
-
-	// close task channel
-	close(tasks)
-	wg.Wait()
 }
 
 func Memimg_checking_robot() {
@@ -315,7 +415,12 @@ func Memimg_checking_robot() {
 	get_target_file_path_name_return_img_path := utils.Retry_task(task_get_target_file_path_name, Global.Globalsig_ss, img_path).(utils.Get_target_file_path_name_return)
 	file_path_list := get_target_file_path_name_return_img_path.Files
 
-	insert_data_database_worker_manager_with_exist_bool(file_path_list, 10)
+	single_task_create_database := func(args ...interface{}) error {
+		return create_database()
+	}
+	utils.Retry_single_task(single_task_create_database, Global.Globalsig_ss)
+
+	insert_missing_data_database_batched(file_path_list, archiveBatchSize, Global.Global_database_managebot)
 	fmt.Println("memimg_checking_robot done round")
 }
 
